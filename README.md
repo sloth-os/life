@@ -190,9 +190,10 @@ docs/          DESIGN.md: research, learning design, AI design, compliance
   - a Seedream postcard painted through mm-gateway;
   - a whole mediation.
 
-  With thinking off, an expedition takes 9–20 s, a persona 13–24 s, a chat reply 3–11 s and a debrief 9–14 s. The briefing shows while the locals are still being written. `qwen3.8-max` with thinking took about 4 minutes per expedition (`docs/DESIGN.md` §7.4).
+  With thinking off, an expedition takes 9.5–20 s, a persona 11–24 s, a chat reply 3–11 s (its first words show after a median 3.4 s) and a debrief 9–14 s. The briefing shows while the locals are still being written. `qwen3.8-max` with thinking took about 4 minutes per expedition. Every measurement is in `docs/DESIGN.md` §7.4.
+- **OpenAI-compatible calls have no output cap yet.** Once in 34 tries, a persona ran to 22,000 characters, five times the usual length, and took a minute.
 - **Claude is not yet verified live.** It is tested against the SDK's request and streaming contract with simulated responses. Prompt quality still needs a **live evaluation pass** with a real key (plan in `docs/DESIGN.md` §7.5).
-- **Voices**: the org's omni model hears but doesn't speak (its server rejects audio output), so locals use the browser's voices there. Voices from a model that speaks (gpt-4o-audio, for example) are tested only against a simulated server so far.
+- **Voices**: the org's omni model hears but doesn't speak (its server rejects audio output), so locals use the browser's voices there. Voices from a model that speaks (gpt-4o-audio, for example) are tested only against a simulated server so far. Hearing a spoken line takes 4–20 s, and the words show only once the delivery notes are written too.
 - **Maps agent tools have no live run yet**, and neither do walking routes. Google documents their inputs but not all output fields. The parser accepts several shapes and logs the result keys on first use; check the logs once with a `GOOGLE_MAPS_SERVER_KEY`.
 - **Classroom mode is single-instance**: one JSON file on one server. Behind several instances, use one with a shared volume, or turn it off.
 - **Demo AI speaks English only.** It's deliberately simple and labelled as such: for trying the game, for classrooms without API budgets, and for tests.

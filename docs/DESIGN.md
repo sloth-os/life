@@ -120,7 +120,7 @@ During the conversation:
 ### 4.6 Classroom mode
 Teachers use the game with a class, and the design keeps the privacy model intact while doing it:
 - A teacher creates a class and gets a **class code** for students and a **teacher key**. The key is shown once and stored only as a hash.
-- The teacher **assigns expeditions**: a place, a focus skill and a note. Students join with the code and see the assignments in their class view. Starting one switches the learner's focus skill to the assignment's, so the Game Master and the coach work on it.
+- The teacher **assigns expeditions**: a place, a focus skill and a note. Students join with the code and see the assignments in their class view. Starting one switches the learner's focus skill to the assignment's, so the Game Master and the coach work on it. It stays their focus afterwards, until they choose another on the Compass.
 - After a debrief on an assignment, the student chooses to **share a summary**: the rubric scores, the mentor's headline and growth skill, whether they reached the goal, their self-rating and its calibration gap. The conversation itself never leaves the browser.
 - The **class debrief view** shows, per assignment: how many finished, the share who reached the goal, average scores per skill, the growth areas the mentor named most often, and the class's average calibration gap. A positive gap means the class rates itself higher than the mentor does; that is a good prompt for a discussion about self-assessment.
 - Students are identified by the name they gave and a private id the server never shows. There are no accounts.
@@ -247,17 +247,32 @@ Conversation is usable at this speed. Arrival takes more than ten times its targ
 3. **Live progress.** Long calls answer with server-sent events: the phase (grounding, thinking, writing) with counts every 400 ms, and a keep-alive comment every 15 s. The arrival screen shows real progress and a clock, and proxies see a live connection.
 4. **Two-stage arrival.** The server parses the streaming expedition and sends the briefing (title, scene, greeting, curiosity board) as soon as it is written. The learner reads it while the locals are still being written.
 
-**Measured after.** In CI on the organization's `qwen3.8-omni-flash` with thinking off:
+**Measured after.** Nine CI runs of the real-services suite on the v2 branch (October 2026), on the organization's `qwen3.8-omni-flash` with thinking off. The ranges cover every call those runs made:
 
-| Step | Total |
-|---|---|
-| Expedition | 9–20 s (first token usually after about 2 s, once after 7 s) |
-| Persona (each) | 13–24 s |
-| Mediation scene | about 11 s |
-| NPC reply | 3–11 s |
-| Debrief | 9–14 s |
+| Step | Calls | First output token | Total |
+|---|---|---|---|
+| Expedition | 11 | 1.6–2.7 s in seven calls, 4–9 s in four | 9.5–20 s |
+| Persona (each; the three run in parallel) | 32 | 1.4–10 s | 11–24 s |
+| Mediation scene | 3 | 2.7–4 s | 11–13 s |
+| Reply (a local, or both sides of a mediation) | 24 | 1.2–6.3 s, median 3.4 s | 2.8–11 s |
+| Debrief | 8 | 1.6–5.4 s | 9.3–13.5 s |
+| Hearing a spoken line (a 6–7 s clip) | 15 | | 4–20 s |
+| Pronunciation score (a 1.5–3 s clip) | 15 | | 6.6–26 s, once 54 s |
+| Postcard (Seedream through mm-gateway) | 13 | | 44–73 s |
 
-The real-services expedition test went from 8.5–11 minutes to about 1. With voice and a postcard it now takes 2.5–3 minutes; painting a postcard takes 45–75 s of that. Probing `qwen3.8-omni-flash` showed the same pattern on tiny requests: 1.1–2.4 s with thinking off, 3–5.5 s with it.
+Against the targets:
+- **Arrival is met.** The expedition is written in 9.5–20 s, and its briefing shows before that. The locals are written while the learner reads it.
+- **The debrief is met**: 9.3–13.5 s, against a target of 10–15 s.
+- **Replies are close.** A reply streams as it is written, so its first words show at about the first token: a median of 3.4 s, and within 3 s in 10 of the 24 replies.
+
+Two persona calls are left out of the table. One came back as an empty object after 4 s; that now gets a repair round (§7.3). The other ran to 22,000 characters, five times the usual length, and took 61 s.
+
+The real-services expedition test went from 8.5–11 minutes to about 1. With voice and a postcard it takes 2.3–2.8 minutes, about a minute of which is the painting. The mediation test takes about a minute, and the whole suite 3.7–4 minutes. On the probe's tiny requests, the thinking switch halves the time: a median of 2.1 s with thinking off against 4.2 s with it (27 calls each).
+
+**Next, from these measurements:**
+1. **Bound each task's output** on OpenAI-compatible servers, which have no cap today. A runaway persona keeps its local waiting, and because the persona goes into every reply's prompt, it slows the whole conversation too.
+2. **Show the heard words first.** The voice model writes the transcript before the delivery notes. Streaming it into the message box, as replies are streamed, lets the player check their words while the notes are still being written.
+3. **Log the time to the briefing.** It is the wait a player actually sees on arrival, and the logs don't record it yet.
 
 ### 7.5 Evaluation plan (for prompt iteration)
 - **Partner realism**: on scripted learner transcripts (rude, generic, excellent), check that rapport moves in the right direction, insights are withheld before thresholds, and boundaries hold.
@@ -377,6 +392,8 @@ Long calls (expedition, persona, scene, debrief) answer with **server-sent event
   - Questions to the mentor (§4.4).
   - Walking routes and localized place summaries, in place of the review insights the agent tools don't offer (§8).
 - **Next**:
+  - the three steps the v2 measurements point to: bounded outputs, the heard words first, and the time to the briefing (§7.4);
+  - a live run of the Maps agent tools and walking routes, with a server key (§8);
   - spoken locals once a speaking voice model is configured, verified live;
   - a live evaluation pass with Claude (§7.5);
   - more interface languages;
