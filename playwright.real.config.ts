@@ -34,6 +34,8 @@ export default defineConfig({
     baseURL: `http://localhost:${port}`,
     // No traces: they record network traffic, which includes the browser Maps key.
     trace: "off",
+    // A click that can never happen (a hidden element) fails in a minute, not at the test timeout.
+    actionTimeout: 60_000,
     screenshot: "only-on-failure",
     video: "off",
     permissions: ["microphone"],

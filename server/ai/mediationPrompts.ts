@@ -1,6 +1,7 @@
 // Prompts for mediation scenes: the Game Master sets up a disagreement between two locals, the
 // model plays both of them while the learner mediates, and the mentor debriefs the mediation.
 import type { MediationDebriefRequest, MediationEntry, MediationScene, MediationSceneRequest, MediationTurnRequest, Party } from "../../shared/schemas.ts";
+import { LANGUAGE_FOR_AI } from "../../shared/languages.ts";
 import { LOCALS_CHARTER, MENTOR_IDENTITY, RUBRICS, playerTag, renderPlayer } from "./prompts.ts";
 
 export const GM_SCENE_SYSTEM = `You are the Game Master of "Common Ground", an educational game where players practise social skills with locals around the world. Set up a mediation scene: two locals in this place disagree, and the player steps in to help them find common ground.
@@ -58,7 +59,7 @@ disagreement: ${scene.topic}
 ${party(scene.parties[0])}
 ${party(scene.parties[1])}
 shared interest neither has noticed: ${scene.sharedInterest}
-the visitor: ${player.name}${player.ageBand === "teen" ? " (a teenager; keep it age-appropriate)" : ""}`;
+the visitor: ${player.name}${player.ageBand === "teen" ? " (a teenager; keep it age-appropriate)" : ""}${player.language && player.language !== "en" ? `\nThe visitor speaks ${LANGUAGE_FOR_AI[player.language]}: both of you answer in it.` : ""}`;
 }
 
 const nameOf = (scene: MediationScene, who: "a" | "b") => scene.parties[who === "a" ? 0 : 1].name;

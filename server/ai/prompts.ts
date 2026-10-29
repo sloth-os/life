@@ -5,6 +5,7 @@
 // conversation is append-only; per-turn state rides in the newest user message.
 import { SKILL_IDS, SKILLS } from "../../shared/skills.ts";
 import { HIDDEN_CONCERN_HINT_AT, HIDDEN_CONCERN_REVEAL_AT, TURN_SOFT_CAP, rapportTier } from "../../shared/rules.ts";
+import { LANGUAGE_FOR_AI, languageRule } from "../../shared/languages.ts";
 import { LENSES, SCENARIOS } from "../../shared/world.ts";
 import type { AskRequest, DebriefRequest, Delivery, ExpeditionContext, HintRequest, NpcCard, Persona, PlayerContext, PlayerTurn, TranscriptEntry, TurnRequest } from "../../shared/schemas.ts";
 import type { GroundingPack } from "../grounding/index.ts";
@@ -72,12 +73,15 @@ function renderSourceList(pack: GroundingPack): string {
 export function renderPlayer(player: PlayerContext): string {
   const ratings = SKILL_IDS.map((id) => `${SKILLS[id].name} ${Math.round(player.skills[id] ?? 20)}`).join(", ");
   return [
+    languageRule(player.language),
     `name: ${player.name}`,
     `age band: ${player.ageBand === "teen" ? "teenager (13–17) — keep everything age-appropriate" : "adult"}`,
     `focus skill: ${SKILLS[player.focusSkill].name}`,
     `skill ratings (0–100): ${ratings}`,
     `recent scenarios: ${player.recentScenarios.length ? player.recentScenarios.join(", ") : "none yet"}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function renderExpeditionInput(input: ComposeExpeditionInput): string {
@@ -150,7 +154,7 @@ player's goal: ${npc.goal}
 
 <player>
 name: ${player.name}
-age band: ${player.ageBand === "teen" ? "teenager (13–17) — keep the persona and scenario age-appropriate" : "adult"}
+age band: ${player.ageBand === "teen" ? "teenager (13–17) — keep the persona and scenario age-appropriate" : "adult"}${player.language && player.language !== "en" ? `\n${languageRule(player.language)}` : ""}
 </player>${memory ? `\n\n<previous_meeting>\n${memory}\nThey have met before; let the persona and opening line reflect that.\n</previous_meeting>` : ""}`;
 }
 
@@ -246,7 +250,7 @@ function turnMarker(turnNumber: number, rapport: number): string {
 export function buildNpcMessages(request: TurnRequest, turnNumber: number): { role: "user" | "assistant"; content: string }[] {
   const { transcript, persona, player } = request;
   const messages: { role: "user" | "assistant"; content: string }[] = [
-    { role: "user", content: `<scene>A visitor named ${player.name} approaches you at ${persona.placeName}.</scene>` },
+    { role: "user", content: `<scene>A visitor named ${player.name} approaches you at ${persona.placeName}.${player.language && player.language !== "en" ? ` They speak ${LANGUAGE_FOR_AI[player.language]}: talk with them in it.` : ""}</scene>` },
   ];
   let rapport = persona.startingRapport;
   let playerTurn = 0;
@@ -333,6 +337,7 @@ export function renderAskInput(request: AskRequest): string {
     .join(", ");
   const history = request.history.map((h) => `LEARNER ASKED: ${h.question}\nYOU ANSWERED: ${h.answer}`).join("\n\n");
   return [
+    languageRule(request.player.language),
     `<conversation with ${request.persona.name}, ${request.persona.role} at ${request.persona.placeName}>`,
     renderTranscriptForMentor(request.transcript),
     "</conversation>",
@@ -370,7 +375,8 @@ function renderTranscriptForMentor(transcript: TranscriptEntry[]): string {
 
 function renderEncounterHeader(request: HintRequest | DebriefRequest): string {
   const { context, npc, persona } = request;
-  return `place: ${persona.placeName}, ${[context.locality.city, context.locality.country].filter(Boolean).join(", ")}
+  const rule = languageRule(request.player.language);
+  return `${rule ? `${rule}\n` : ""}place: ${persona.placeName}, ${[context.locality.city, context.locality.country].filter(Boolean).join(", ")}
 local: ${persona.name}, ${persona.age}, ${persona.role} — ${persona.personality} Communication style: ${persona.communicationStyle}
 scenario: ${SCENARIOS[npc.scenario].name} — "${SCENARIOS[npc.scenario].prompt}"; difficulty ${npc.difficulty}
 learner's goal: ${npc.goal}`;

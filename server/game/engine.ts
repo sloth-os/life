@@ -344,7 +344,7 @@ export class GameEngine {
   async createExpedition(request: ExpeditionRequest, signal?: AbortSignal, onEvent?: OnEngineEvent): Promise<Expedition> {
     const progress = onEvent ? progressReporter(onEvent) : undefined;
     progress?.report("grounding", undefined, true);
-    const pack = await this.#deps.grounding.gather(request.destination);
+    const pack = await this.#deps.grounding.gather(request.destination, request.player.language);
     const profile = initialSkillProfile();
     for (const id of SKILL_IDS) profile[id].rating = request.player.skills[id] ?? profile[id].rating;
     let briefed = false;
@@ -373,10 +373,13 @@ export class GameEngine {
 
   async createPersona(request: PersonaRequest, signal?: AbortSignal, onEvent?: OnEngineEvent): Promise<Persona> {
     const pack = this.#deps.grounding.cached(request.context.expeditionId);
-    const draft = await this.#deps.ai.createPersona({ request, pack }, signal, onEvent ? progressReporter(onEvent).onProgress() : undefined);
-    const persona = finalizePersona(draft, request.npc);
-    if (persona.insights.length === 0) throw new AiOutputError("the local has nothing to share");
-    return persona;
+    // A persona without insights can't be played; models occasionally leave them out, so ask once more.
+    for (let attempt = 1; ; attempt++) {
+      const draft = await this.#deps.ai.createPersona({ request, pack }, signal, onEvent ? progressReporter(onEvent).onProgress() : undefined);
+      const persona = finalizePersona(draft, request.npc);
+      if (persona.insights.length > 0) return persona;
+      if (attempt >= 2) throw new AiOutputError("the local has nothing to share");
+    }
   }
 
   async turn(request: TurnRequest, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<TurnResult> {

@@ -5,6 +5,7 @@ import { canRecord, startRecording, type Recording } from "../lib/recorder.ts";
 import { message, toast } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 import { Spinner } from "./ui.tsx";
+import { t } from "../i18n/index.ts";
 
 /**
  * Practise saying a phrase: record an attempt and the voice model scores how close it came,
@@ -22,7 +23,7 @@ export function PronounceButton({ phrase, language, meaning }: { phrase: string;
       const audio = await recording.stop();
       setResult(await api.pronounce({ audio: audio.base64, phrase, language, meaning }));
     } catch (error) {
-      toast("error", "Couldn't score that", message(error));
+      toast("error", t("pronounce.failed"), message(error));
     } finally {
       setState({ kind: "idle" });
     }
@@ -39,7 +40,7 @@ export function PronounceButton({ phrase, language, meaning }: { phrase: string;
       setResult(null);
       setState({ kind: "recording", recording });
     } catch (error) {
-      toast("error", "The microphone isn't available", message(error));
+      toast("error", t("voice.noMic"), message(error));
     }
   };
 
@@ -54,12 +55,12 @@ export function PronounceButton({ phrase, language, meaning }: { phrase: string;
         aria-pressed={state.kind === "recording"}
         data-testid="pronounce-btn"
       >
-        {state.kind === "recording" ? "● Stop" : state.kind === "scoring" ? <Spinner label="Listening…" /> : "🎙 Practise saying it"}
+        {state.kind === "recording" ? `● ${t("pronounce.stop")}` : state.kind === "scoring" ? <Spinner label={t("pronounce.listening")} /> : `🎙 ${t("pronounce.practise")}`}
       </button>
       {result ? (
         <p className={`pronounce__result pronounce__result--${band}`} role="status" data-testid="pronounce-result">
           <strong>{result.score}/100</strong> {result.tip}
-          {result.transcript ? <span className="muted small"> Heard: “{result.transcript}”</span> : null}
+          {result.transcript ? <span className="muted small"> {t("pronounce.heard", { text: result.transcript })}</span> : null}
         </p>
       ) : null}
     </div>

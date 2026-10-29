@@ -19,8 +19,8 @@
   --shadow: 0 1px 2px rgba(29, 36, 51, 0.06), 0 10px 30px rgba(29, 36, 51, 0.1);
   --radius: 14px;
   /* "Literata" is only a subset with the macron letters (index.html), which Fraunces misdraws. */
-  --font-display: "Literata", "Fraunces", Georgia, "Times New Roman", serif;
-  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Literata", "Fraunces", Georgia, "Times New Roman", "Noto Sans SC", serif;
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
   --text-scale: 1;
   color-scheme: light;
 }
@@ -682,6 +682,10 @@ textarea:focus {
 .search__row {
   display: flex;
   gap: 8px;
+}
+
+.search__row .btn {
+  white-space: nowrap;
 }
 
 .results {

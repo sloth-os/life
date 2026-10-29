@@ -3,6 +3,7 @@
 // that the AI must cite and the UI shows as links.
 import type { Destination, GeoResult, LatLng, Locality, Source, Weather } from "../../shared/schemas.ts";
 import { findPostcard } from "../../shared/destinations.ts";
+import { MAPS_LANGUAGE_CODE, type Lang } from "../../shared/languages.ts";
 import { LENS_IDS, LENSES, type LensId } from "../../shared/world.ts";
 import type { ServerConfig } from "../config.ts";
 import { TtlCache } from "../util/cache.ts";
@@ -133,7 +134,8 @@ export class GroundingService {
     return nominatimSearch(query, { userAgent: config.userAgent, fetchImpl: this.#deps.fetchImpl, cache: this.#geocodeCache });
   }
 
-  async gather(destination: Destination): Promise<GroundingPack> {
+  /** `language` is the player's: Google's place summaries come in it. */
+  async gather(destination: Destination, language: Lang = "en"): Promise<GroundingPack> {
     const { config, mapsTools } = this.#deps;
     const http = { userAgent: config.userAgent, fetchImpl: this.#deps.fetchImpl };
     const wiki = { lang: config.wikipediaLang, ...http, cache: this.#wikiCache };
@@ -158,7 +160,7 @@ export class GroundingService {
       google && mapsTools
         ? LENS_IDS.map((lens) =>
             settle(
-              mapsTools.searchPlaces(`${LENSES[lens].placeQuery} near ${destination.query ?? destination.label}`, center, 4000).then((r) => ({ lens, ...r })),
+              mapsTools.searchPlaces(`${LENSES[lens].placeQuery} near ${destination.query ?? destination.label}`, center, 4000, MAPS_LANGUAGE_CODE[language]).then((r) => ({ lens, ...r })),
               { lens, summary: "", places: [] },
               `search_places(${lens})`,
               (m) => this.#log(m),

@@ -5,6 +5,7 @@ import { loadPostcard, savePostcard } from "../lib/postcards.ts";
 import { message, toast } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 import { Spinner, formatElapsed, useElapsed } from "./ui.tsx";
+import { t } from "../i18n/index.ts";
 
 export interface PostcardProps {
   expeditionId: string;
@@ -47,7 +48,7 @@ export function Postcard({ expeditionId, label, country, lenses, compact }: Post
       await savePostcard(expeditionId, blob);
       setUrl(URL.createObjectURL(blob));
     } catch (error) {
-      toast("error", "The postcard couldn't be painted", message(error));
+      toast("error", t("postcard.failed"), message(error));
     } finally {
       setPaintingSince(null);
     }
@@ -56,8 +57,8 @@ export function Postcard({ expeditionId, label, country, lenses, compact }: Post
   if (url) {
     return (
       <figure className={`postcard${compact ? " postcard--compact" : ""}`}>
-        <img src={url} alt={`A painted postcard of ${label}`} data-testid="postcard-img" />
-        {compact ? null : <figcaption className="muted small">AI illustration of {[label, country].filter(Boolean).join(", ")} · kept in this browser</figcaption>}
+        <img src={url} alt={t("postcard.alt", { place: label })} data-testid="postcard-img" />
+        {compact ? null : <figcaption className="muted small">{t("postcard.caption", { place: [label, country].filter(Boolean).join(", ") })}</figcaption>}
       </figure>
     );
   }
@@ -65,13 +66,13 @@ export function Postcard({ expeditionId, label, country, lenses, compact }: Post
   if (paintingSince !== null) {
     return (
       <p className="postcard-status" role="status">
-        <Spinner label={`Painting your postcard… ${formatElapsed(elapsed)}`} />
+        <Spinner label={t("postcard.painting", { time: formatElapsed(elapsed) })} />
       </p>
     );
   }
   return (
     <button type="button" className={`btn${compact ? " btn--small" : ""}`} onClick={() => void paint()} data-testid="paint-postcard">
-      🖼 {compact ? "Paint postcard" : `Paint a postcard of ${label}`}
+      🖼 {compact ? t("postcard.paintShort") : t("postcard.paint", { place: label })}
     </button>
   );
 }

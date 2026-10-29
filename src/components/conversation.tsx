@@ -8,6 +8,7 @@ import { canRecord, startRecording, type Recording } from "../lib/recorder.ts";
 import { message, toast } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 import { Spinner, formatElapsed, useElapsed } from "./ui.tsx";
+import { t, type MessageKey } from "../i18n/index.ts";
 
 export const TONE_ICONS: Record<Delivery["tone"], string> = { warm: "🤗", friendly: "🙂", neutral: "😐", hesitant: "🤔", tense: "😬", flat: "😶", impatient: "⏩" };
 
@@ -15,7 +16,7 @@ export const TONE_ICONS: Record<Delivery["tone"], string> = { warm: "🤗", frie
 export function DeliveryChip({ delivery }: { delivery: Delivery }) {
   return (
     <p className="delivery" title={delivery.note}>
-      🎙 Spoken · {TONE_ICONS[delivery.tone]} {delivery.tone} · {delivery.pace} pace
+      🎙 {t("voice.spokenChip", { tone: `${TONE_ICONS[delivery.tone]} ${t(`tone.${delivery.tone}` as MessageKey)}`, pace: t(`pace.${delivery.pace}` as MessageKey) })}
     </p>
   );
 }
@@ -41,13 +42,13 @@ export function useVoiceInput(context: string, onHeard: (transcript: string) => 
       const audio = await recording.stop();
       const heard = await api.listen({ audio: audio.base64, context });
       if (!heard.transcript.trim()) {
-        toast("info", "I didn't catch that", "Try again a little closer to the microphone.");
+        toast("info", t("voice.didntCatch"), t("voice.closer"));
       } else {
         onHeard(heard.transcript);
         setDelivery(heard);
       }
     } catch (error) {
-      toast("error", "Couldn't hear that", message(error));
+      toast("error", t("voice.couldntHear"), message(error));
     } finally {
       setVoice({ kind: "idle" });
     }
@@ -63,7 +64,7 @@ export function useVoiceInput(context: string, onHeard: (transcript: string) => 
       });
       setVoice({ kind: "recording", recording, startedAt: Date.now() });
     } catch (error) {
-      toast("error", "The microphone isn't available", error instanceof DOMException && error.name === "NotAllowedError" ? "Allow microphone access for this site to speak to locals." : message(error));
+      toast("error", t("voice.noMic"), error instanceof DOMException && error.name === "NotAllowedError" ? t("voice.allowMic") : message(error));
     }
   };
 
@@ -83,7 +84,7 @@ export function MicButton({ input, disabled }: { input: VoiceInput; disabled?: b
       onClick={() => void input.toggle()}
       disabled={voice.kind === "hearing" || disabled}
       aria-pressed={voice.kind === "recording"}
-      aria-label={voice.kind === "recording" ? "Stop recording" : "Speak your message"}
+      aria-label={voice.kind === "recording" ? t("voice.stop") : t("composer.speak")}
       data-testid="mic-btn"
       style={{ "--level": level } as CSSProperties}
     >
@@ -98,29 +99,29 @@ export function VoiceStatus({ input }: { input: VoiceInput }) {
   if (voice.kind === "recording") {
     return (
       <p className="voice-status" role="status">
-        ● Recording {formatElapsed(seconds)} — tap the microphone again when you're done
+        ● {t("voice.recording", { time: formatElapsed(seconds) })}
       </p>
     );
   }
   if (voice.kind === "hearing") {
     return (
       <p className="voice-status" role="status">
-        Listening to how you said it…
+        {t("voice.listening")}
       </p>
     );
   }
   if (!delivery) return null;
   return (
     <p className="voice-status" role="status" data-testid="heard">
-      {TONE_ICONS[delivery.tone]} You sounded {delivery.tone}, at a {delivery.pace} pace. {delivery.note}
+      {TONE_ICONS[delivery.tone]} {t("voice.youSounded", { tone: t(`tone.${delivery.tone}` as MessageKey), pace: t(`pace.${delivery.pace}` as MessageKey) })} {delivery.note}
       <button type="button" className="link-btn small" onClick={() => input.setDelivery(null)}>
-        Send as typed
+        {t("voice.sendAsTyped")}
       </button>
     </p>
   );
 }
 
-const RATING_LABELS = ["Rough", "Shaky", "Okay", "Good", "Great"];
+const RATING_LABELS: MessageKey[] = ["rating.1", "rating.2", "rating.3", "rating.4", "rating.5"];
 
 /** Self-assessment first, then the mentor's feedback (with live progress while it is written). */
 export function ReflectionForm({ reason, onSubmit }: { reason: string; onSubmit: (rating: number, note: string) => void }) {
@@ -128,7 +129,7 @@ export function ReflectionForm({ reason, onSubmit }: { reason: string; onSubmit:
   const [startedAt, setStartedAt] = useState<number | null>(null);
   useEffect(() => setStartedAt(loading ? Date.now() : null), [loading]);
   const elapsed = useElapsed(startedAt);
-  const doing = progress?.phase === "writing" ? "Your mentor is writing your feedback…" : progress?.thinking ? "Your mentor is thinking it over…" : "Your mentor is reviewing the conversation…";
+  const doing = progress?.phase === "writing" ? t("mentor.writing") : progress?.thinking ? t("mentor.thinking") : t("mentor.reviewing");
   const [rating, setRating] = useState(0);
   const [note, setNote] = useState("");
   return (
@@ -143,22 +144,22 @@ export function ReflectionForm({ reason, onSubmit }: { reason: string; onSubmit:
           if (rating) onSubmit(rating, note);
         }}
       >
-        <h3>Before your mentor weighs in…</h3>
-        <p>How do you think that conversation went?</p>
-        <div className="stars" role="radiogroup" aria-label="Your self-rating">
+        <h3>{t("reflect.title")}</h3>
+        <p>{t("reflect.question")}</p>
+        <div className="stars" role="radiogroup" aria-label={t("reflect.selfRating")}>
           {RATING_LABELS.map((label, i) => (
             <button key={label} type="button" role="radio" aria-checked={rating === i + 1} className={rating >= i + 1 ? "is-on" : ""} onClick={() => setRating(i + 1)} data-testid={`rate-${i + 1}`}>
               <span aria-hidden="true">★</span>
-              <span className="stars__label">{label}</span>
+              <span className="stars__label">{t(label)}</span>
             </button>
           ))}
         </div>
         <label className="field">
-          <span>What would you do differently? (optional)</span>
+          <span>{t("reflect.differently")}</span>
           <textarea value={note} maxLength={400} rows={2} onChange={(e) => setNote(e.target.value)} />
         </label>
         <button type="submit" className="btn btn--primary" disabled={!rating || loading} data-testid="get-feedback">
-          {loading ? <Spinner label={`${doing} ${formatElapsed(elapsed)}`} /> : "Get feedback"}
+          {loading ? <Spinner label={`${doing} ${formatElapsed(elapsed)}`} /> : t("reflect.getFeedback")}
         </button>
       </form>
     </div>

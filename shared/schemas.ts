@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { SKILL_IDS, type SkillId } from "./skills.ts";
 import { EMOTION_IDS, LENS_IDS, MOVE_IDS, SCENARIO_IDS, type EmotionId, type MoveId } from "./world.ts";
+import { LANGS } from "./languages.ts";
 import { PLAYER_MESSAGE_MAX } from "./rules.ts";
 
 const text = (max: number) => z.string().max(max);
@@ -207,6 +208,8 @@ export type TranscriptEntry = z.infer<typeof TranscriptEntrySchema>;
 
 export const PlayerSchema = z.object({
   name: text(40),
+  /** The language the player plays in; the AI writes in it too. */
+  language: z.enum(LANGS).optional(),
   ageBand: z.enum(["teen", "adult"]),
   focusSkill: z.enum(SKILL_IDS),
   skills: z.partialRecord(z.enum(SKILL_IDS), z.number().min(0).max(100)),

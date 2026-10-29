@@ -127,7 +127,8 @@ test("a real mediation: two locals at odds, played by the real model", async ({ 
   const snap = async (name: string) => testInfo.attach(name, { body: await page.screenshot(), contentType: "image/png" });
 
   await onboard(page, "Kit");
-  await page.locator(".postcard-row", { hasText: "Lisbon" }).click();
+  // A postcard in a continent the list shows open (Africa and Asia start expanded).
+  await page.locator(".postcard-row", { hasText: "Marrakech" }).click();
   await page.getByRole("button", { name: "Travel here" }).click();
   await expect(page.locator(".local-card:not(.local-card--pending)").first(), "the model composes the expedition").toBeVisible({ timeout: COMPOSE_TIMEOUT });
 

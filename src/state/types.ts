@@ -19,6 +19,7 @@ import type {
   TranscriptEntry,
 } from "../../shared/schemas.ts";
 import type { SkillId } from "../../shared/skills.ts";
+import type { Lang } from "../i18n/index.ts";
 import type { LensId, ScenarioId } from "../../shared/world.ts";
 
 export type Screen = "title" | "onboarding" | "world" | "expedition" | "encounter" | "mediation" | "debrief" | "journal" | "compass" | "classroom" | "settings";
@@ -37,6 +38,8 @@ export interface Settings {
   reducedMotion: boolean;
   /** 3D fly-ins over Google's photorealistic map while an expedition is prepared (on unless false). */
   flyIns?: boolean;
+  /** Interface (and AI) language; the browser's when unset. */
+  language?: Lang;
   theme: "system" | "light" | "dark";
   accessCode: string;
 }

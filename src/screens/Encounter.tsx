@@ -11,6 +11,7 @@ import type { SceneView } from "../map/types.ts";
 import { abandonEncounter, leaveEncounter, requestHint, sendMessage, submitReflection } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 import type { EncounterState } from "../state/types.ts";
+import { lensName, scenarioName, skillName, t } from "../i18n/index.ts";
 
 /** Street View in Google mode; otherwise a photo of the place from Wikipedia, or an illustrated card. */
 function Scene({ config, expedition, npc }: { config: AppConfig; expedition: Expedition; npc: NpcCard }) {
@@ -64,7 +65,7 @@ function Scene({ config, expedition, npc }: { config: AppConfig; expedition: Exp
       <div ref={ref} className={`scene-frame__pano${mode === "streetview" ? "" : " is-hidden"}`} />
       {mode !== "streetview" ? (
         <div className="scene-card" style={photo ? ({ backgroundImage: `url("${photo.src}")` } as CSSProperties) : undefined}>
-          {mode === "loading" ? <Spinner label="Finding a street view…" /> : null}
+          {mode === "loading" ? <Spinner label={t("encounter.findingStreetView")} /> : null}
           {!photo && mode === "card" ? (
             <span className="scene-card__icon" aria-hidden="true">
               {lens.icon}
@@ -80,7 +81,7 @@ function Scene({ config, expedition, npc }: { config: AppConfig; expedition: Exp
         </span>
         {photo ? (
           <a href={photo.page} target="_blank" rel="noreferrer" className="scene-caption__credit">
-            Photo via Wikipedia
+            {t("encounter.photoCredit")}
           </a>
         ) : null}
       </div>
@@ -89,10 +90,10 @@ function Scene({ config, expedition, npc }: { config: AppConfig; expedition: Exp
 }
 
 const END_TEXT: Record<string, (name: string) => string> = {
-  farewell: () => "You said goodbye.",
-  walked_away: (name) => `${name} walked away.`,
-  turn_limit: (name) => `${name} had to get back to their day.`,
-  left: () => "You ended the conversation.",
+  farewell: () => t("encounter.endFarewell"),
+  walked_away: (name) => t("encounter.endWalkedAway", { name }),
+  turn_limit: (name) => t("encounter.endTurnLimit", { name }),
+  left: () => t("encounter.endLeft"),
 };
 
 /** "wipes her hands" → "Amina wipes her hands" (unless the model already named them). */
@@ -111,7 +112,7 @@ function Transcript({ encounter, npc }: { encounter: EncounterState; npc: NpcCar
   const firstName = encounter.persona.name.split(" ")[0];
 
   return (
-    <ol className="transcript" ref={ref} aria-live="polite" aria-label="Conversation">
+    <ol className="transcript" ref={ref} aria-live="polite" aria-label={t("encounter.conversation")}>
       {encounter.transcript.map((entry, i) =>
         entry.speaker === "npc" ? (
           <li key={i} className="msg msg--npc">
@@ -129,10 +130,10 @@ function Transcript({ encounter, npc }: { encounter: EncounterState; npc: NpcCar
                 return insight ? (
                   <div key={id} className="insight-pop" style={{ "--lens-color": LENSES[insight.lens].color } as CSSProperties}>
                     <span className="eyebrow">
-                      {LENSES[insight.lens].icon} Insight unlocked · {LENSES[insight.lens].name}
+                      {LENSES[insight.lens].icon} {t("encounter.insightUnlocked", { lens: lensName(insight.lens) })}
                     </span>
                     <strong>{insight.title}</strong>
-                    <span className="muted small">Saved to your field journal</span>
+                    <span className="muted small">{t("encounter.savedToJournal")}</span>
                   </div>
                 ) : null;
               })}
@@ -158,7 +159,7 @@ function Transcript({ encounter, npc }: { encounter: EncounterState; npc: NpcCar
                 <span className="caret" aria-hidden="true" />
               </p>
             ) : (
-              <p className="bubble typing" aria-label={`${firstName} is thinking`}>
+              <p className="bubble typing" aria-label={t("encounter.isThinking", { name: firstName ?? "" })}>
                 <span />
                 <span />
                 <span />
@@ -179,25 +180,25 @@ function Coach({ encounter, onUse, dismissed, onDismiss }: { encounter: Encounte
     <div className="coach">
       {latest ? (
         <div className="coach__hint" role="note">
-          <button type="button" className="icon-btn" aria-label="Hide tip" onClick={onDismiss}>
+          <button type="button" className="icon-btn" aria-label={t("coach.hide")} onClick={onDismiss}>
             ×
           </button>
           <p className="eyebrow">
-            {SKILLS[latest.skill].icon} Coach · {SKILLS[latest.skill].name}
+            {SKILLS[latest.skill].icon} {t("coach.label", { skill: skillName(latest.skill) })}
           </p>
           <p>{latest.observation}</p>
           <p>
             <strong>{latest.suggestion}</strong>
           </p>
           {latest.example ? (
-            <button type="button" className="coach__example" onClick={() => onUse(latest.example)} title="Put this in your message box">
-              Try: “{latest.example}”
+            <button type="button" className="coach__example" onClick={() => onUse(latest.example)} title={t("coach.useExample")}>
+              {t("coach.try", { example: latest.example })}
             </button>
           ) : null}
         </div>
       ) : null}
       <button type="button" className="btn btn--small" onClick={() => void requestHint()} disabled={left <= 0 || loading || encounter.awaiting} data-testid="coach-btn">
-        {loading ? <Spinner /> : "💡"} Coach{left > 0 ? ` (${left} left)` : " — no hints left"}
+        {loading ? <Spinner /> : "💡"} {left > 0 ? t("coach.button", { left }) : t("coach.none")}
       </button>
     </div>
   );
@@ -277,8 +278,8 @@ function Composer({ encounter }: { encounter: EncounterState }) {
             if (!e.target.value.trim()) voice.setDelivery(null);
           }}
           onKeyDown={onKeyDown}
-          placeholder={`Say something to ${firstName}…`}
-          aria-label={`Your message to ${firstName}`}
+          placeholder={t("composer.placeholder", { name: firstName ?? "" })}
+          aria-label={t("composer.label", { name: firstName ?? "" })}
           enterKeyHint="send"
           disabled={encounter.awaiting}
           autoFocus
@@ -286,21 +287,21 @@ function Composer({ encounter }: { encounter: EncounterState }) {
         {settings.voiceInput && voice.available ? (
           <MicButton input={voice} disabled={encounter.awaiting} />
         ) : settings.voiceInput && canListen() ? (
-          <button type="button" className={`icon-btn mic${listening ? " is-on" : ""}`} onClick={toggleMic} aria-pressed={Boolean(listening)} aria-label={listening ? "Stop dictation" : "Speak your message"}>
+          <button type="button" className={`icon-btn mic${listening ? " is-on" : ""}`} onClick={toggleMic} aria-pressed={Boolean(listening)} aria-label={listening ? t("composer.stopDictation") : t("composer.speak")}>
             🎙️
           </button>
         ) : null}
         <button type="submit" className="btn btn--primary" disabled={!draft.trim() || encounter.awaiting} data-testid="send-btn">
-          Send
+          {t("composer.send")}
         </button>
       </div>
       <VoiceStatus input={voice} />
       <div className="composer__meta">
         <span className="muted small">
-          {turns < TURN_SOFT_CAP ? `${turns} of ~${TURN_SOFT_CAP} turns` : "Time to wrap up"} · Enter to send
+          {turns < TURN_SOFT_CAP ? t("composer.turns", { turns, cap: TURN_SOFT_CAP }) : t("composer.wrapUp")} · {t("composer.enterToSend")}
         </span>
         <button type="button" className="link-btn small" onClick={() => leaveEncounter()} disabled={encounter.awaiting}>
-          End conversation
+          {t("composer.end")}
         </button>
       </div>
     </form>
@@ -321,9 +322,9 @@ export function EncounterScreen() {
   if (!encounter || !expedition || !npc) {
     return (
       <div className="page">
-        <p>No conversation in progress.</p>
+        <p>{t("encounter.none")}</p>
         <button type="button" className="btn btn--primary" onClick={() => abandonEncounter()}>
-          Back
+          {t("common.back")}
         </button>
       </div>
     );
@@ -340,16 +341,16 @@ export function EncounterScreen() {
   return (
     <div className="encounter">
       <Scene config={game.ui.config!} expedition={expedition} npc={npc} />
-      <section className="chat" aria-label={`Conversation with ${persona.name}`}>
+      <section className="chat" aria-label={t("encounter.conversationWith", { name: persona.name })}>
         <header className="chat__head">
           <button
             type="button"
             className="link-btn back"
             onClick={() => {
-              if (!hasSpoken || encounter.status !== "active" || window.confirm("Leave without feedback? This conversation won't count.")) abandonEncounter();
+              if (!hasSpoken || encounter.status !== "active" || window.confirm(t("encounter.leaveConfirm"))) abandonEncounter();
             }}
           >
-            ← Locals
+            ← {t("encounter.backToLocals")}
           </button>
           <div className="chat__who">
             <Avatar name={persona.name} hue={npc.hue} size={48} />
@@ -366,14 +367,14 @@ export function EncounterScreen() {
           <RapportMeter value={encounter.rapport} delta={lastDelta} thresholds={persona.insights.map((i) => i.threshold)} />
           <div className="chat__goal">
             <span className="tag">
-              {scenario.icon} {scenario.name}
+              {scenario.icon} {scenarioName(npc.scenario)}
             </span>
             <LensTag lens={npc.lens} />
             <span className="muted small">
-              📗 {found}/{persona.insights.length} insights
+              📗 {t("encounter.insights", { found, total: persona.insights.length })}
             </span>
             <p>
-              <strong>Your goal:</strong> {npc.goal}
+              <strong>{t("encounter.yourGoal")}</strong> {npc.goal}
             </p>
           </div>
         </header>

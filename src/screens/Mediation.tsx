@@ -8,6 +8,7 @@ import { Avatar, EmotionChip, MoveChips } from "../components/ui.tsx";
 import { abandonMediation, leaveMediation, sendMediationMessage, submitMediationReflection } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 import type { MediationState } from "../state/types.ts";
+import { t } from "../i18n/index.ts";
 
 const partyOf = (scene: MediationScene, who: PartyId): Party => scene.parties[who === "a" ? 0 : 1];
 const first = (name: string) => name.split(" ")[0]!;
@@ -15,10 +16,10 @@ const first = (name: string) => name.split(" ")[0]!;
 /** 0 calm … 100 boiling over. */
 function TensionMeter({ value }: { value: number }) {
   const v = Math.round(value);
-  const label = v >= 75 ? "Heated" : v > AGREEMENT_TENSION_MAX ? "Tense" : v > 25 ? "Cooling" : "Calm";
+  const label = v >= 75 ? t("tension.heated") : v > AGREEMENT_TENSION_MAX ? t("tension.tense") : v > 25 ? t("tension.cooling") : t("tension.calm");
   return (
-    <div className="tension" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={v} aria-label={`Tension ${v} of 100: ${label}`} data-testid="tension">
-      <span className="tension__label">Tension</span>
+    <div className="tension" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={v} aria-label={t("tension.aria", { value: v, label })} data-testid="tension">
+      <span className="tension__label">{t("tension.label")}</span>
       <strong>{label}</strong>
       <div className="tension__track">
         <div className="tension__fill" style={{ width: `${v}%` }} />
@@ -37,8 +38,8 @@ function PartyCard({ party, trust }: { party: Party; trust: number }) {
         </h3>
         <p className="muted small">{party.role}</p>
         <p className="party__position">“{party.position}”</p>
-        <div className="party__trust" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(trust)} aria-label={`${first(party.name)} trusts you ${Math.round(trust)} of 100`}>
-          <span className="muted small">Trusts you</span>
+        <div className="party__trust" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(trust)} aria-label={t("party.trustAria", { name: first(party.name), value: Math.round(trust) })}>
+          <span className="muted small">{t("party.trusts")}</span>
           <div className="rapport__track">
             <div className="rapport__fill" style={{ width: `${Math.round(trust)}%` }} />
           </div>
@@ -68,7 +69,7 @@ function Transcript({ mediation }: { mediation: MediationState }) {
     );
   };
   return (
-    <ol className="transcript" ref={ref} aria-live="polite" aria-label="Conversation">
+    <ol className="transcript" ref={ref} aria-live="polite" aria-label={t("encounter.conversation")}>
       {scene.opening.map((l, i) => line(l.who, l.text, l.gesture, `o${i}`))}
       {mediation.transcript.map((entry, i) =>
         entry.speaker === "party" ? (
@@ -92,7 +93,7 @@ function Transcript({ mediation }: { mediation: MediationState }) {
                 <span className="caret" aria-hidden="true" />
               </p>
             ) : (
-              <p className="bubble typing" aria-label="They're answering">
+              <p className="bubble typing" aria-label={t("mediation.answering")}>
                 <span />
                 <span />
                 <span />
@@ -151,24 +152,24 @@ function Composer({ mediation }: { mediation: MediationState }) {
             if (!e.target.value.trim()) voice.setDelivery(null);
           }}
           onKeyDown={onKeyDown}
-          placeholder={`Say something to ${first(a.name)} and ${first(b.name)}…`}
-          aria-label={`Your message to ${first(a.name)} and ${first(b.name)}`}
+          placeholder={t("composer.placeholder", { name: t("mediation.pair", { a: first(a.name), b: first(b.name) }) })}
+          aria-label={t("composer.label", { name: t("mediation.pair", { a: first(a.name), b: first(b.name) }) })}
           enterKeyHint="send"
           disabled={mediation.awaiting}
           autoFocus
         />
         {settings.voiceInput && voice.available ? <MicButton input={voice} disabled={mediation.awaiting} /> : null}
         <button type="submit" className="btn btn--primary" disabled={!draft.trim() || mediation.awaiting} data-testid="send-btn">
-          Send
+          {t("composer.send")}
         </button>
       </div>
       <VoiceStatus input={voice} />
       <div className="composer__meta">
         <span className="muted small">
-          {turns < MEDIATION_TURN_SOFT_CAP ? `${turns} of ~${MEDIATION_TURN_SOFT_CAP} turns` : "Time to wrap up"} · Enter to send
+          {turns < MEDIATION_TURN_SOFT_CAP ? t("composer.turns", { turns, cap: MEDIATION_TURN_SOFT_CAP }) : t("composer.wrapUp")} · {t("composer.enterToSend")}
         </span>
         <button type="button" className="link-btn small" onClick={() => leaveMediation()} disabled={mediation.awaiting}>
-          End conversation
+          {t("composer.end")}
         </button>
       </div>
     </form>
@@ -179,13 +180,13 @@ function endText(mediation: MediationState): string {
   const [a, b] = mediation.scene.parties.map((p) => first(p.name));
   switch (mediation.endReason) {
     case "agreement":
-      return `${a} and ${b} agreed: ${mediation.agreement ?? "they'll try a fairer arrangement."}`;
+      return t("mediation.endAgreement", { a: a!, b: b!, agreement: mediation.agreement ?? t("mediation.fairerArrangement") });
     case "walked_away":
-      return "One of them walked off. It happens — let's see what you can learn from it.";
+      return t("mediation.endWalkedAway");
     case "turn_limit":
-      return `${a} and ${b} had to get back to their day.`;
+      return t("mediation.endTurnLimit", { a: a!, b: b! });
     default:
-      return "You stepped away from the disagreement.";
+      return t("mediation.endLeft");
   }
 }
 
@@ -195,9 +196,9 @@ export function MediationScreen() {
   if (!mediation) {
     return (
       <div className="page">
-        <p>No disagreement to mediate right now.</p>
+        <p>{t("mediation.none")}</p>
         <button type="button" className="btn btn--primary" onClick={() => abandonMediation()}>
-          Back
+          {t("common.back")}
         </button>
       </div>
     );
@@ -208,8 +209,8 @@ export function MediationScreen() {
   const hasSpoken = mediation.transcript.some((e) => e.speaker === "player");
   return (
     <div className="encounter mediation" data-testid="mediation">
-      <aside className="mediation__scene" aria-label="The scene">
-        <p className="eyebrow">Two locals at odds · {scene.placeName}</p>
+      <aside className="mediation__scene" aria-label={t("mediation.sceneLabel")}>
+        <p className="eyebrow">{t("mediation.eyebrow", { place: scene.placeName })}</p>
         <h2>{scene.title}</h2>
         <p className="scene">{scene.situation}</p>
         <TensionMeter value={mediation.tension} />
@@ -217,18 +218,18 @@ export function MediationScreen() {
           <PartyCard party={a} trust={mediation.rapport.a} />
           <PartyCard party={b} trust={mediation.rapport.b} />
         </div>
-        <p className="muted small">They're fictional characters played by AI. In real life, step in only when it's safe and welcome.</p>
+        <p className="muted small">{t("mediation.safety")}</p>
       </aside>
-      <section className="chat" aria-label={`Mediating between ${a.name} and ${b.name}`}>
+      <section className="chat" aria-label={t("mediation.chatLabel", { a: a.name, b: b.name })}>
         <header className="chat__head">
           <button
             type="button"
             className="link-btn back"
             onClick={() => {
-              if (!hasSpoken || mediation.status !== "active" || window.confirm("Leave without feedback? This conversation won't count.")) abandonMediation();
+              if (!hasSpoken || mediation.status !== "active" || window.confirm(t("encounter.leaveConfirm"))) abandonMediation();
             }}
           >
-            ← Locals
+            ← {t("encounter.backToLocals")}
           </button>
           <div className="chat__who">
             <div>
@@ -240,9 +241,9 @@ export function MediationScreen() {
             {lastParty?.speaker === "party" ? <EmotionChip emotion={lastParty.emotion} /> : null}
           </div>
           <div className="chat__goal">
-            <span className="tag">⚖️ Mediation</span>
+            <span className="tag">⚖️ {t("mediation.tag")}</span>
             <p>
-              <strong>Your goal:</strong> {scene.goal}
+              <strong>{t("encounter.yourGoal")}</strong> {scene.goal}
             </p>
           </div>
         </header>

@@ -1,16 +1,17 @@
 import { useState, type FormEvent } from "react";
 import { SKILL_IDS, SKILLS, type SkillId } from "../../shared/skills.ts";
 import { Logo } from "../components/ui.tsx";
-import { completeOnboarding, go, submitAccessCode } from "../state/actions.ts";
+import { completeOnboarding, go, submitAccessCode, updateSettings } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
+import { LANGS, LANG_NAMES, lang, skillText, t, type Lang } from "../i18n/index.ts";
 
 export function ModeBadges() {
   const { config } = useGame().ui;
   if (!config) return null;
   return (
     <p className="mode-badges">
-      <span className={`mode mode--${config.aiMode}`}>{config.aiMode === "claude" ? "AI: Claude" : config.aiMode === "openai" ? `AI: ${config.model}` : "AI: Demo (scripted)"}</span>
-      <span className={`mode mode--${config.mapsMode}`}>{config.mapsMode === "google" ? "Map: Google Maps" : "Map: Open map"}</span>
+      <span className={`mode mode--${config.aiMode}`}>{config.aiMode === "claude" ? t("mode.aiClaude") : config.aiMode === "openai" ? t("mode.aiModel", { model: config.model ?? "" }) : t("mode.aiDemo")}</span>
+      <span className={`mode mode--${config.mapsMode}`}>{config.mapsMode === "google" ? t("mode.mapGoogle") : t("mode.mapOpen")}</span>
     </p>
   );
 }
@@ -22,42 +23,58 @@ export function TitleScreen() {
       <div className="title-card">
         <Logo size={76} />
         <h1>Common Ground</h1>
-        <p className="tagline">Explore the real world. Meet its people. Find common ground.</p>
-        <p className="lede">
-          Travel anywhere on the map, talk with AI locals grounded in real places, and grow six real-world social skills — with a mentor who shows you exactly what
-          worked and what to try next.
-        </p>
+        <p className="tagline">{t("title.tagline")}</p>
+        <p className="lede">{t("title.lede")}</p>
         <div className="cta-row">
           {game.player ? (
             <button type="button" className="btn btn--primary btn--lg" onClick={() => go("world")}>
-              Continue as {game.player.name}
+              {t("title.continue", { name: game.player.name })}
             </button>
           ) : (
             <button type="button" className="btn btn--primary btn--lg" onClick={() => go("onboarding")}>
-              Begin your journey
+              {t("title.begin")}
             </button>
           )}
         </div>
         <ol className="how">
           <li>
             <span aria-hidden="true">🌍</span>
-            <strong>Go anywhere</strong>
-            <span>Real places, today's weather, real sources.</span>
+            <strong>{t("title.howGo")}</strong>
+            <span>{t("title.howGoText")}</span>
           </li>
           <li>
             <span aria-hidden="true">💬</span>
-            <strong>Talk with locals</strong>
-            <span>Earn trust to unlock their stories.</span>
+            <strong>{t("title.howTalk")}</strong>
+            <span>{t("title.howTalkText")}</span>
           </li>
           <li>
             <span aria-hidden="true">🧑‍🏫</span>
-            <strong>Learn from a mentor</strong>
-            <span>Specific feedback on your own words.</span>
+            <strong>{t("title.howLearn")}</strong>
+            <span>{t("title.howLearnText")}</span>
           </li>
         </ol>
         <ModeBadges />
+        <LanguagePicker />
       </div>
     </div>
+  );
+}
+
+/** The interface language (the AI writes in it too). */
+export function LanguagePicker() {
+  const settings = useGame().settings;
+  return (
+    <label className="language-picker">
+      <span aria-hidden="true">🌐</span>
+      <span className="sr-only">{t("settings.language")}</span>
+      <select value={settings.language ?? lang()} onChange={(e) => updateSettings({ language: e.target.value as Lang })} data-testid="language-select">
+        {LANGS.map((l) => (
+          <option key={l} value={l}>
+            {LANG_NAMES[l]}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -70,26 +87,26 @@ export function OnboardingScreen() {
   const next = (event: FormEvent) => {
     event.preventDefault();
     if (step < 2) setStep(step + 1);
-    else completeOnboarding({ name: name.trim() || "Traveler", ageBand, focusSkill: focus, createdAt: Date.now() });
+    else completeOnboarding({ name: name.trim() || t("onboarding.defaultName"), ageBand, focusSkill: focus, createdAt: Date.now() });
   };
 
   return (
     <div className="onboarding">
       <form className="onboarding-card" onSubmit={next} aria-labelledby="onb-title">
-        <p className="step-dots" aria-label={`Step ${step + 1} of 3`}>
+        <p className="step-dots" aria-label={t("onboarding.step", { step: step + 1, total: 3 })}>
           {[0, 1, 2].map((i) => (
             <span key={i} className={i <= step ? "on" : ""} />
           ))}
         </p>
         {step === 0 ? (
           <>
-            <h2 id="onb-title">What should the locals call you?</h2>
+            <h2 id="onb-title">{t("onboarding.nameTitle")}</h2>
             <label className="field">
-              <span>Your name</span>
-              <input autoFocus value={name} maxLength={40} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sam" />
+              <span>{t("onboarding.name")}</span>
+              <input autoFocus value={name} maxLength={40} onChange={(e) => setName(e.target.value)} placeholder={t("onboarding.namePlaceholder")} />
             </label>
             <fieldset className="field">
-              <legend>Your age</legend>
+              <legend>{t("onboarding.age")}</legend>
               <div className="segmented">
                 <label className={ageBand === "teen" ? "is-on" : ""}>
                   <input type="radio" name="age" checked={ageBand === "teen"} onChange={() => setAgeBand("teen")} /> 13–17
@@ -103,16 +120,16 @@ export function OnboardingScreen() {
         ) : null}
         {step === 1 ? (
           <>
-            <h2 id="onb-title">What would you like to get better at?</h2>
-            <p className="muted">Pick a focus. Your expeditions and coaching will lean toward it — you can change it any time.</p>
-            <div className="skill-picker" role="radiogroup" aria-label="Focus skill">
+            <h2 id="onb-title">{t("onboarding.focusTitle")}</h2>
+            <p className="muted">{t("onboarding.focusText")}</p>
+            <div className="skill-picker" role="radiogroup" aria-label={t("onboarding.focusSkill")}>
               {SKILL_IDS.map((id) => (
                 <button key={id} type="button" role="radio" aria-checked={focus === id} className={`skill-option${focus === id ? " is-on" : ""}`} onClick={() => setFocus(id)}>
                   <span className="skill-option__icon" aria-hidden="true">
                     {SKILLS[id].icon}
                   </span>
-                  <strong>{SKILLS[id].name}</strong>
-                  <span>{SKILLS[id].tagline}</span>
+                  <strong>{skillText(id).name}</strong>
+                  <span>{skillText(id).tagline}</span>
                 </button>
               ))}
             </div>
@@ -120,38 +137,34 @@ export function OnboardingScreen() {
         ) : null}
         {step === 2 ? (
           <>
-            <h2 id="onb-title">How it works</h2>
+            <h2 id="onb-title">{t("onboarding.howTitle")}</h2>
             <ul className="rules">
               <li>
-                <strong>Rapport is earned.</strong> Locals have their own lives and moods. Genuine questions, listening and respect build trust; assumptions and pushiness
-                cost it.
+                <strong>{t("onboarding.rule1")}</strong> {t("onboarding.rule1Text")}
               </li>
               <li>
-                <strong>Trust unlocks insights</strong> about nature, culture, history, society and the economy — each with its source.
+                <strong>{t("onboarding.rule2")}</strong> {t("onboarding.rule2Text")}
               </li>
               <li>
-                <strong>Your coach</strong> can give you three hints per conversation. Use them when you're stuck.
+                <strong>{t("onboarding.rule3")}</strong> {t("onboarding.rule3Text")}
               </li>
               <li>
-                <strong>Reflect first, then get feedback.</strong> Rate yourself, then your mentor shows what worked — quoting your own words.
+                <strong>{t("onboarding.rule4")}</strong> {t("onboarding.rule4Text")}
               </li>
             </ul>
-            <p className="notice">
-              Characters are fictional and played by AI. Facts come with sources you can check. This is practice for real conversations — it works best when you try
-              what you learn with real people.
-            </p>
+            <p className="notice">{t("onboarding.notice")}</p>
           </>
         ) : null}
         <div className="onboarding-actions">
           {step > 0 ? (
             <button type="button" className="btn btn--ghost" onClick={() => setStep(step - 1)}>
-              Back
+              {t("common.back")}
             </button>
           ) : (
             <span />
           )}
           <button type="submit" className="btn btn--primary">
-            {step < 2 ? "Next" : "Open the map"}
+            {step < 2 ? t("common.next") : t("onboarding.openMap")}
           </button>
         </div>
       </form>
@@ -171,14 +184,14 @@ export function AccessGate() {
         }}
       >
         <Logo size={48} />
-        <h2>Enter the access code</h2>
-        <p className="muted">This copy of Common Ground is private. Your teacher or host can give you the code.</p>
+        <h2>{t("access.title")}</h2>
+        <p className="muted">{t("access.text")}</p>
         <label className="field">
-          <span>Access code</span>
+          <span>{t("access.code")}</span>
           <input autoFocus value={code} onChange={(e) => setCode(e.target.value)} />
         </label>
         <button type="submit" className="btn btn--primary" disabled={!code.trim()}>
-          Continue
+          {t("common.continue")}
         </button>
       </form>
     </div>

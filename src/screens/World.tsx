@@ -13,6 +13,7 @@ import { useMap } from "../map/index.ts";
 import type { MapMarker } from "../map/types.ts";
 import { currentExpedition, ensurePersona, go, meet, personKey, startExpedition, startMediation, surpriseDestination, toast } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
+import { continentName, placeName, postcardText, rankName, scenarioName, skillName, t, type MessageKey } from "../i18n/index.ts";
 
 const CONTINENTS: Postcard["continent"][] = ["Africa", "Asia", "Europe", "North America", "South America", "Oceania"];
 
@@ -46,7 +47,7 @@ export function WorldScreen() {
       id: `postcard:${p.id}`,
       position: { lat: p.lat, lng: p.lng },
       kind: visited.has(p.id) ? "visited" : "postcard",
-      label: p.name,
+      label: postcardText(p).name,
       glyph: visited.has(p.id) ? "✓" : LENSES[p.lenses[0]!].icon,
       color: visited.has(p.id) ? "var(--accent-2)" : "var(--accent)",
       selected: selected?.postcardId === p.id,
@@ -57,7 +58,7 @@ export function WorldScreen() {
     }
     if (selected && !selected.postcardId) list.push({ id: "pin", position: selected, kind: "pin", label: selected.label, glyph: "📍", color: "var(--accent)", selected: true });
     return list;
-  }, [visited, game.atlas, selected]);
+  }, [visited, game.atlas, selected, game.settings.language]);
 
   useEffect(() => {
     map.run((m) => {
@@ -94,7 +95,7 @@ export function WorldScreen() {
       const { results: found } = await api.search(q);
       setResults(found);
     } catch (error) {
-      toast("error", "Search failed", error instanceof Error ? error.message : String(error));
+      toast("error", t("world.searchFailed"), error instanceof Error ? error.message : String(error));
     } finally {
       setSearching(false);
     }
@@ -104,23 +105,23 @@ export function WorldScreen() {
 
   return (
     <div className="map-screen">
-      <aside className="side-panel" aria-label="Choose a destination">
+      <aside className="side-panel" aria-label={t("world.chooseDestination")}>
         <div className="side-panel__scroll">
           <header className="hello">
-            <h2>Where to next, {game.player!.name}?</h2>
+            <h2>{t("world.whereNext", { name: game.player!.name })}</h2>
             <p className="muted">
-              {rank.name} · focus: {focus.icon} {focus.name}{" "}
+              {rankName(rank.name)} · {t("world.focus")} {focus.icon} {skillName(game.player!.focusSkill)}{" "}
               <button type="button" className="link-btn" onClick={() => go("compass")}>
-                change
+                {t("world.change")}
               </button>
             </p>
           </header>
 
           {selected ? (
             <div className="travel-card" data-testid="travel-card">
-              <p className="eyebrow">{selected.source === "pin" ? "Dropped pin" : postcard ? `${postcard.continent} · postcard` : "Destination"}</p>
-              <h3>{selected.label}</h3>
-              {postcard ? <p>{postcard.theme}</p> : selected.source === "pin" ? <p>Your guide will figure out where you've landed.</p> : <p>{selected.country}</p>}
+              <p className="eyebrow">{selected.source === "pin" ? t("world.droppedPin") : postcard ? t("world.postcardOf", { continent: continentName(postcard.continent) }) : t("world.destination")}</p>
+              <h3>{placeName(selected)}</h3>
+              {postcard ? <p>{postcardText(postcard).theme}</p> : selected.source === "pin" ? <p>{t("world.pinGuide")}</p> : <p>{selected.country}</p>}
               {postcard ? (
                 <p className="tags">
                   {postcard.lenses.map((l) => (
@@ -130,25 +131,25 @@ export function WorldScreen() {
               ) : null}
               <div className="row">
                 <button type="button" className="btn btn--primary" onClick={() => void startExpedition(selected)} disabled={Boolean(game.ui.busy)}>
-                  Travel here
+                  {t("world.travelHere")}
                 </button>
                 <button type="button" className="btn btn--ghost" onClick={() => setSelected(null)}>
-                  Cancel
+                  {t("common.cancel")}
                 </button>
               </div>
             </div>
           ) : (
             <div className="suggestion">
-              <p className="eyebrow">Today's postcard</p>
+              <p className="eyebrow">{t("world.todaysPostcard")}</p>
               <button type="button" className="suggestion__card" onClick={() => choose(postcardDestination(suggestion))}>
                 <strong>
-                  {suggestion.name}, {suggestion.country}
+                  {postcardText(suggestion).name}, {postcardText(suggestion).country}
                 </strong>
-                <span>{suggestion.theme}</span>
+                <span>{postcardText(suggestion).theme}</span>
               </button>
               <div className="row">
                 <button type="button" className="btn" onClick={() => choose(surpriseDestination(game))}>
-                  🎲 Surprise me
+                  🎲 {t("world.surprise")}
                 </button>
               </div>
             </div>
@@ -163,22 +164,22 @@ export function WorldScreen() {
             }}
           >
             <label htmlFor="go-anywhere" className="eyebrow">
-              Go anywhere
+              {t("world.goAnywhere")}
             </label>
             {searchEnabled ? (
               <div className="search__row">
-                <input id="go-anywhere" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="A city, a market, a mountain town…" />
+                <input id="go-anywhere" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("world.searchPlaceholder")} />
                 <button type="submit" className="btn" disabled={searching || query.trim().length < 2}>
-                  {searching ? <Spinner /> : "Search"}
+                  {searching ? <Spinner /> : t("world.search")}
                 </button>
               </div>
             ) : (
-              <p className="muted small">Search needs Maps agent tools (GOOGLE_MAPS_SERVER_KEY).</p>
+              <p className="muted small">{t("world.searchNeedsTools")}</p>
             )}
-            <p className="muted small">…or click anywhere on the map to drop a pin.</p>
+            <p className="muted small">{t("world.orPin")}</p>
             {results ? (
               <ul className="results">
-                {results.length === 0 ? <li className="muted">No places found.</li> : null}
+                {results.length === 0 ? <li className="muted">{t("world.noPlaces")}</li> : null}
                 {results.map((r, i) => (
                   <li key={`${r.lat},${r.lng},${i}`}>
                     <button type="button" onClick={() => choose({ lat: r.lat, lng: r.lng, label: r.label, country: r.sublabel?.split(", ").at(-1), source: "search", mapsUrl: r.mapsUrl, query: query.trim() })}>
@@ -187,26 +188,26 @@ export function WorldScreen() {
                     </button>
                   </li>
                 ))}
-                {results.length ? <li className="muted small">Results: {results[0]!.attribution}</li> : null}
+                {results.length ? <li className="muted small">{t("world.results", { attribution: results[0]!.attribution })}</li> : null}
               </ul>
             ) : null}
           </form>
 
-          <section className="postcards" aria-label="Postcards">
-            <p className="eyebrow">Postcards from six continents</p>
+          <section className="postcards" aria-label={t("world.postcards")}>
+            <p className="eyebrow">{t("world.postcardsTitle")}</p>
             {CONTINENTS.map((continent) => (
               <details key={continent} open={continent === "Africa" || continent === "Asia"}>
-                <summary>{continent}</summary>
+                <summary>{continentName(continent)}</summary>
                 <ul>
                   {POSTCARDS.filter((p) => p.continent === continent).map((p) => (
                     <li key={p.id}>
                       <button type="button" className={`postcard-row${selected?.postcardId === p.id ? " is-on" : ""}`} onClick={() => choose(postcardDestination(p))}>
                         <span className="postcard-row__name">
                           {visited.has(p.id) ? "✓ " : ""}
-                          {p.name}
-                          <span className="muted"> · {p.country}</span>
+                          {postcardText(p).name}
+                          <span className="muted"> · {postcardText(p).country}</span>
                         </span>
-                        <span className="postcard-row__theme">{p.theme}</span>
+                        <span className="postcard-row__theme">{postcardText(p).theme}</span>
                       </button>
                     </li>
                   ))}
@@ -264,9 +265,9 @@ export function ExpeditionScreen() {
       <div className="map-screen">
         <aside className="side-panel">
           <div className="side-panel__scroll">
-            <p>No active expedition.</p>
+            <p>{t("expedition.none")}</p>
             <button type="button" className="btn btn--primary" onClick={() => go("world")}>
-              Back to the world map
+              {t("expedition.backToMap")}
             </button>
           </div>
         </aside>
@@ -278,25 +279,25 @@ export function ExpeditionScreen() {
 
   return (
     <div className="map-screen">
-      <aside className="side-panel" aria-label={`Expedition: ${expedition.title}`}>
+      <aside className="side-panel" aria-label={t("expedition.label", { title: expedition.title })}>
         <div className="side-panel__scroll">
           <button type="button" className="link-btn back" onClick={() => go("world")}>
-            ← World map
+            ← {t("expedition.worldMap")}
           </button>
           {unfinished ? (
             <div className="resume" role="status">
               <span>
-                {unfinished.status === "active" ? `You were talking with ${unfinished.persona.name}.` : `Your conversation with ${unfinished.persona.name} is waiting for your reflection.`}
+                {unfinished.status === "active" ? t("expedition.wereTalking", { name: unfinished.persona.name }) : t("expedition.awaitingReflection", { name: unfinished.persona.name })}
               </span>
               <button type="button" className="btn btn--primary btn--small" onClick={() => go("encounter")}>
-                Continue
+                {t("common.continue")}
               </button>
             </div>
           ) : null}
           <BriefingHeader briefing={expedition} />
 
-          <section aria-label="Locals">
-            <p className="eyebrow">People you can meet</p>
+          <section aria-label={t("expedition.locals")}>
+            <p className="eyebrow">{t("expedition.peopleToMeet")}</p>
             <ul className="locals">
               {expedition.npcs.map((npc) => {
                 const status = game.ui.personaStatus[npc.id];
@@ -313,7 +314,7 @@ export function ExpeditionScreen() {
                         </h3>
                         <p className="muted small">
                           {npc.role} · {npc.mapsUrl ? (
-                            <a href={npc.mapsUrl} target="_blank" rel="noreferrer" title="Open in Google Maps">
+                            <a href={npc.mapsUrl} target="_blank" rel="noreferrer" title={t("expedition.openInMaps")}>
                               {npc.placeName}
                             </a>
                           ) : (
@@ -324,29 +325,29 @@ export function ExpeditionScreen() {
                     </div>
                     <p className="local-card__hook">“{npc.hook}”</p>
                     {npc.walk ? (
-                      <p className="muted small" title="Walking time from Google Maps">
-                        🚶 {npc.walk.minutes} min walk from where you arrive
+                      <p className="muted small" title={t("expedition.walkSource")}>
+                        🚶 {t("expedition.walk", { minutes: npc.walk.minutes })}
                       </p>
                     ) : null}
                     <p className="tags">
                       <LensTag lens={npc.lens} />
                       <span className="tag">
-                        {scenario.icon} {scenario.name}
+                        {scenario.icon} {scenarioName(npc.scenario)}
                       </span>
                       <Difficulty level={npc.difficulty} />
                     </p>
                     <p className="local-card__goal">
-                      <strong>Goal:</strong> {npc.goal}
+                      <strong>{t("expedition.goal")}</strong> {npc.goal}
                     </p>
                     <div className="row">
-                      {met ? <span className="muted small">Met · rapport {Math.round(met.lastRapport)}</span> : null}
+                      {met ? <span className="muted small">{t("expedition.met", { rapport: Math.round(met.lastRapport) })}</span> : null}
                       {status === "error" && !ready ? (
-                        <button type="button" className="btn" onClick={() => void ensurePersona(expedition, npc).catch(() => toast("error", `Couldn't find ${npc.name}`, "Try again in a moment."))}>
-                          Try again
+                        <button type="button" className="btn" onClick={() => void ensurePersona(expedition, npc).catch(() => toast("error", t("expedition.couldntFind", { name: npc.name }), t("common.tryAgainSoon")))}>
+                          {t("common.tryAgain")}
                         </button>
                       ) : (
                         <button type="button" className="btn btn--primary" disabled={!ready} onClick={() => void meet(npc.id)} data-testid={`meet-${npc.id}`}>
-                          {ready ? (met ? `Visit ${npc.name} again` : `Meet ${npc.name}`) : <Spinner label={`${npc.name} is on the way…`} />}
+                          {ready ? (met ? t("expedition.visitAgain", { name: npc.name }) : t("expedition.meet", { name: npc.name })) : <Spinner label={t("expedition.onTheWay", { name: npc.name })} />}
                         </button>
                       )}
                     </div>
@@ -357,23 +358,23 @@ export function ExpeditionScreen() {
           </section>
 
           <section className="card mediation-card" aria-labelledby="mediation-title">
-            <p className="eyebrow">Challenge · mediation</p>
-            <h3 id="mediation-title">⚖️ Two locals at odds</h3>
-            <p className="muted small">Step into a disagreement and help two people find common ground: listen to both, stay fair, look for what they both want.</p>
+            <p className="eyebrow">{t("mediation.challenge")}</p>
+            <h3 id="mediation-title">⚖️ {t("mediation.title")}</h3>
+            <p className="muted small">{t("mediation.pitch")}</p>
             {(() => {
               const m = game.active.mediation;
               const resumable = m && m.expeditionId === expedition.id && m.status !== "debriefed";
               return (
                 <button type="button" className="btn" onClick={() => void startMediation()} disabled={game.ui.sceneLoading} data-testid="start-mediation">
-                  {game.ui.sceneLoading ? <Spinner label="Finding them…" /> : resumable ? "Back to the disagreement" : "Step in"}
+                  {game.ui.sceneLoading ? <Spinner label={t("mediation.finding")} /> : resumable ? t("mediation.resume") : t("mediation.stepIn")}
                 </button>
               );
             })()}
           </section>
 
           <p className="notice small">
-            {expedition.aiMode === "demo" ? "Demo AI: scripted locals built from real sources. " : ""}People here are fictional characters played by AI; facts come from the sources
-            below — check them, and ask locals in real life too.
+            {expedition.aiMode === "demo" ? `${t("expedition.demoNote")} ` : ""}
+            {t("expedition.fictionNote")}
           </p>
           <SourceList sources={expedition.sources} />
         </div>
@@ -400,7 +401,7 @@ function BriefingHeader({ briefing }: { briefing: ExpeditionBriefing }) {
 
       <div className="greeting-card">
         <div>
-          <p className="eyebrow">Say hello in {briefing.greeting.language}</p>
+          <p className="eyebrow">{t("briefing.sayHello", { language: briefing.greeting.language })}</p>
           <p className="greeting-card__phrase">{briefing.greeting.phrase}</p>
           <p className="muted small">
             {briefing.greeting.pronunciation ? `“${briefing.greeting.pronunciation}” · ` : ""}
@@ -408,7 +409,7 @@ function BriefingHeader({ briefing }: { briefing: ExpeditionBriefing }) {
           </p>
         </div>
         {canSpeak() ? (
-          <button type="button" className="icon-btn" aria-label="Hear it" onClick={() => speak(briefing.greeting.phrase)}>
+          <button type="button" className="icon-btn" aria-label={t("briefing.hearIt")} onClick={() => speak(briefing.greeting.phrase)}>
             🔊
           </button>
         ) : null}
@@ -417,7 +418,7 @@ function BriefingHeader({ briefing }: { briefing: ExpeditionBriefing }) {
 
       {briefing.curiosity.length ? (
         <section className="curiosity">
-          <p className="eyebrow">Curiosity board</p>
+          <p className="eyebrow">{t("briefing.curiosity")}</p>
           <ul>
             {briefing.curiosity.map((q) => (
               <li key={q}>
@@ -433,9 +434,9 @@ function BriefingHeader({ briefing }: { briefing: ExpeditionBriefing }) {
 
 /** What the model is doing right now, in the player's terms. */
 function progressNote(progress: StreamProgress | null): string {
-  if (!progress || progress.phase === "grounding") return "Gathering places, weather and sources…";
-  if (progress.phase === "thinking") return progress.thinking ? `The Game Master is thinking (${formatCount(progress.thinking)} characters of notes)…` : "The Game Master is planning your visit…";
-  return `The Game Master is writing (${formatCount(progress.written)} characters)…`;
+  if (!progress || progress.phase === "grounding") return t("progress.grounding");
+  if (progress.phase === "thinking") return progress.thinking ? t("progress.thinkingNotes", { count: formatCount(progress.thinking) }) : t("progress.thinking");
+  return t("progress.writing", { count: formatCount(progress.written) });
 }
 
 /** Two-stage arrival: the briefing is here, the locals are still being written. */
@@ -450,15 +451,15 @@ export function ArrivingScreen() {
   if (!busy?.briefing) return null;
   return (
     <div className="map-screen">
-      <aside className="side-panel" aria-label={`Arriving: ${busy.briefing.title}`} aria-busy="true">
+      <aside className="side-panel" aria-label={t("arriving.label", { title: busy.briefing.title })} aria-busy="true">
         <div className="side-panel__scroll">
           <BriefingHeader briefing={busy.briefing} />
-          <section aria-label="Locals">
-            <p className="eyebrow">People you can meet</p>
+          <section aria-label={t("expedition.locals")}>
+            <p className="eyebrow">{t("expedition.peopleToMeet")}</p>
             <ul className="locals">
               {[0, 1, 2].map((i) => (
                 <li key={i} className="local-card local-card--pending" aria-hidden={i > 0}>
-                  {i === 0 ? <Spinner label={`Meeting the locals… ${formatElapsed(elapsed)}`} /> : null}
+                  {i === 0 ? <Spinner label={t("arriving.meeting", { time: formatElapsed(elapsed) })} /> : null}
                 </li>
               ))}
             </ul>
@@ -472,10 +473,10 @@ export function ArrivingScreen() {
   );
 }
 
-const PHASES: { id: StreamProgress["phase"]; label: string }[] = [
-  { id: "grounding", label: "Finding places, weather and sources" },
-  { id: "thinking", label: "Planning your visit" },
-  { id: "writing", label: "Writing the scene" },
+const PHASES: { id: StreamProgress["phase"]; label: MessageKey }[] = [
+  { id: "grounding", label: "phase.grounding" },
+  { id: "thinking", label: "phase.thinking" },
+  { id: "writing", label: "phase.writing" },
 ];
 
 export function ScoutingOverlay() {
@@ -503,15 +504,15 @@ export function ScoutingOverlay() {
   if (!busy || busy.briefing) return null;
   const now = PHASES.findIndex((p) => p.id === (busy.progress?.phase ?? "grounding"));
   return (
-    <div className={`overlay${flying ? " overlay--flyin" : ""}`} role="dialog" aria-modal="true" aria-label={`Travelling to ${busy.label}`}>
+    <div className={`overlay${flying ? " overlay--flyin" : ""}`} role="dialog" aria-modal="true" aria-label={t("overlay.travelling", { place: busy.label })}>
       {flying ? <div className="flyin" ref={flyRef} data-testid="flyin" /> : null}
       <div className="overlay__card">
-        <p className="eyebrow">Expedition · {formatElapsed(elapsed)}</p>
-        <h2>Travelling to {busy.label}</h2>
+        <p className="eyebrow">{t("overlay.eyebrow", { time: formatElapsed(elapsed) })}</p>
+        <h2>{t("overlay.travelling", { place: busy.label })}</h2>
         <ol className="scout-steps">
           {PHASES.map((phase, i) => (
             <li key={phase.id} className={i < now ? "is-done" : i === now ? "is-now" : ""}>
-              {i < now ? "✓" : i === now ? <Spinner /> : "·"} {phase.label}
+              {i < now ? "✓" : i === now ? <Spinner /> : "·"} {t(phase.label)}
             </li>
           ))}
         </ol>

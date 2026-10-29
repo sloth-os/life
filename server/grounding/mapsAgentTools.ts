@@ -245,9 +245,10 @@ export class MapsAgentTools {
     throw new Error("unreachable");
   }
 
-  async searchPlaces(textQuery: string, center?: LatLng, radiusM = 3000): Promise<AgentPlaceSearch> {
+  /** `languageCode` sets the summary's language (ISO 639-1, optionally with _COUNTRY, e.g. zh_CN). */
+  async searchPlaces(textQuery: string, center?: LatLng, radiusM = 3000, languageCode = "en"): Promise<AgentPlaceSearch> {
     const payload = await this.#call("search_places", (tools) => {
-      const args: Json = { text_query: textQuery, language_code: "en" };
+      const args: Json = { text_query: textQuery, language_code: languageCode };
       if (center) {
         const bias = buildLocationBias(tools.get("search_places")?.inputSchema, center, radiusM);
         args[bias.key] = bias.value;

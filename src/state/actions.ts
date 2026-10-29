@@ -18,6 +18,7 @@ import { ApiError, api, setAccessCode } from "../lib/api.ts";
 import { voiceLine } from "../lib/voice.ts";
 import { store } from "./store.ts";
 import type { ClassroomSave, DebriefResult, EncounterState, GameState, MediationState, PlayerProfile, Screen, Settings, Toast } from "./types.ts";
+import { lang, placeName, t, type MessageKey } from "../i18n/index.ts";
 
 // ── Small helpers ────────────────────────────────────────────────────────
 let toastSeq = 0;
@@ -32,8 +33,42 @@ export function dismissToast(id: number): void {
   store.ui({ toasts: store.get().ui.toasts.filter((t) => t.id !== id) });
 }
 
+/** Server errors the player sees, in their language (the server's English text otherwise). */
+const ERROR_MESSAGES: Partial<Record<string, MessageKey>> = {
+  offline: "error.offline",
+  stream_ended: "error.streamEnded",
+  rate_limited: "error.rateLimited",
+  ai_busy: "error.aiBusy",
+  ai_unavailable: "error.aiUnavailable",
+  ai_unreachable: "error.aiUnreachable",
+  ai_auth: "error.aiAuth",
+  ai_output: "error.aiOutput",
+  ai_refusal: "error.aiRefusal",
+  encounter_over: "error.encounterOver",
+  access_code: "error.accessCode",
+  too_short: "error.tooShort",
+  too_long: "error.tooLong",
+  invalid_audio: "error.invalidAudio",
+  voice_off: "error.voiceOff",
+  images_busy: "error.imagesBusy",
+  images_failed: "error.imagesFailed",
+  images_refused: "error.imagesFailed",
+  images_timeout: "error.imagesTimeout",
+  postcards_off: "error.postcardsOff",
+  class_not_found: "error.classNotFound",
+  not_teacher: "error.notTeacher",
+  class_full: "error.classFull",
+  not_in_class: "error.notInClass",
+  assignment_gone: "error.assignmentGone",
+  mentor_done: "error.mentorDone",
+  internal: "error.internal",
+};
+
 export function message(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
+  if (error instanceof ApiError) {
+    const key = ERROR_MESSAGES[error.code];
+    return key ? t(key) : error.message;
+  }
   if (error instanceof Error) return error.message;
   return String(error);
 }
@@ -55,6 +90,7 @@ export function playerContext(s: GameState): PlayerContext {
     focusSkill: p.focusSkill,
     skills: Object.fromEntries(SKILL_IDS.map((id) => [id, s.progress.skills[id].rating])),
     recentScenarios: s.progress.recentScenarios.slice(-8),
+    language: lang(),
   };
 }
 
@@ -120,7 +156,7 @@ export function surpriseDestination(s: GameState): Destination {
 export async function startExpedition(destination: Destination): Promise<void> {
   const s = store.get();
   if (s.ui.busy || !s.player) return;
-  store.ui({ busy: { kind: "expedition", label: destination.label, destination: { lat: destination.lat, lng: destination.lng }, startedAt: Date.now(), progress: null, briefing: null } });
+  store.ui({ busy: { kind: "expedition", label: placeName(destination), destination: { lat: destination.lat, lng: destination.lng }, startedAt: Date.now(), progress: null, briefing: null } });
   const patchBusy = (patch: Partial<NonNullable<GameState["ui"]["busy"]>>) => {
     const busy = store.get().ui.busy;
     if (busy) store.ui({ busy: { ...busy, ...patch } });
@@ -160,7 +196,7 @@ export async function startExpedition(destination: Destination): Promise<void> {
     const briefed = Boolean(store.get().ui.busy?.briefing);
     store.ui({ busy: null });
     if (briefed) go("world");
-    toast("error", "Couldn't start the expedition", message(error));
+    toast("error", t("toast.expeditionFailed"), message(error));
   }
 }
 
@@ -168,7 +204,7 @@ export function openExpedition(expeditionId: string): void {
   const s = store.get();
   const expedition = s.expeditions.find((e) => e.id === expeditionId);
   if (!expedition) {
-    toast("info", "That trip is no longer saved", "Start a new expedition to the same place from the world map.");
+    toast("info", t("toast.tripGone"), t("toast.tripGoneText"));
     return;
   }
   if (s.active.expeditionId !== expeditionId) {
@@ -256,7 +292,7 @@ export async function meet(npcId: string): Promise<void> {
     store.set((st) => ({ ...st, active: { ...st.active, encounter, debrief: null }, ui: { ...st.ui, screen: "encounter" } }));
     sayAloud(opening.text, base, expedition.id, npc.id);
   } catch (error) {
-    toast("error", `Couldn't find ${npc.name}`, message(error));
+    toast("error", t("expedition.couldntFind", { name: npc.name }), message(error));
   }
 }
 
@@ -357,7 +393,7 @@ export async function sendMessage(text: string, delivery?: Delivery): Promise<bo
       const transcript = e.transcript.at(-1)?.speaker === "player" ? e.transcript.slice(0, -1) : e.transcript;
       return { ...e, transcript, awaiting: false, streaming: null };
     });
-    if (!isAbort(error)) toast("error", "Message not delivered", message(error));
+    if (!isAbort(error)) toast("error", t("toast.notDelivered"), message(error));
     return false;
   } finally {
     turnAbort = null;
@@ -373,7 +409,7 @@ export async function requestHint(): Promise<void> {
     const hint = await api.hint(encounterBase(s, encounter));
     patchEncounter((e) => ({ ...e, hints: [...e.hints, hint] }));
   } catch (error) {
-    toast("error", "The coach couldn't help just now", message(error));
+    toast("error", t("toast.coachFailed"), message(error));
   } finally {
     store.ui({ hintLoading: false });
   }
@@ -416,7 +452,7 @@ export async function startMediation(): Promise<void> {
     sayAloud(last.text, partyOf(scene, last.who), expedition.id, `${scene.id}:${last.who}`);
   } catch (error) {
     store.ui({ sceneLoading: false });
-    toast("error", "Couldn't find the scene", message(error));
+    toast("error", t("toast.sceneFailed"), message(error));
   }
 }
 
@@ -465,7 +501,7 @@ export async function sendMediationMessage(text: string, delivery?: Delivery): P
     return true;
   } catch (error) {
     patchMediation((m) => ({ ...m, transcript: m.transcript.at(-1)?.speaker === "player" ? m.transcript.slice(0, -1) : m.transcript, awaiting: false, streaming: null }));
-    if (!isAbort(error)) toast("error", "Message not delivered", message(error));
+    if (!isAbort(error)) toast("error", t("toast.notDelivered"), message(error));
     return false;
   } finally {
     mediationAbort = null;
@@ -583,7 +619,7 @@ export async function submitMediationReflection(selfRating: number, selfNote: st
     }
   } catch (error) {
     store.ui({ debriefLoading: false });
-    toast("error", "The mentor couldn't review this one", message(error));
+    toast("error", t("toast.mediationDebriefFailed"), message(error));
   }
 }
 
@@ -598,7 +634,7 @@ export async function createClass(name: string, teacherName: string): Promise<bo
     patchClassroom((c) => ({ ...c, teacher: { code: created.code, teacherKey: created.teacherKey, className: name } }));
     return true;
   } catch (error) {
-    toast("error", "Couldn't create the class", message(error));
+    toast("error", t("toast.createClassFailed"), message(error));
     return false;
   }
 }
@@ -607,10 +643,10 @@ export async function joinClass(code: string, name: string): Promise<boolean> {
   try {
     const joined = await api.classes.join(code.trim().toUpperCase(), { name });
     patchClassroom((c) => ({ ...c, student: { code: joined.view.code, studentId: joined.studentId, name, className: joined.view.name } }));
-    toast("success", `You joined ${joined.view.name}`, "Your teacher sees your name and how your assignments went — never your conversations.");
+    toast("success", t("toast.joined", { name: joined.view.name }), t("toast.joinedText"));
     return true;
   } catch (error) {
-    toast("error", "Couldn't join the class", message(error));
+    toast("error", t("toast.joinFailed"), message(error));
     return false;
   }
 }
@@ -645,7 +681,7 @@ async function shareWithClass(expeditionId: string, input: Omit<ClassResultInput
     mark("sent");
   } catch (error) {
     mark("failed");
-    toast("error", "Couldn't share with your class", message(error));
+    toast("error", t("toast.shareFailed"), message(error));
   }
 }
 
@@ -802,10 +838,10 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
       });
     }
     const count = store.get().progress.daily[today()] ?? 0;
-    if (count === 4) toast("info", "Four conversations today — great practice!", "Why not try your field mission with someone in real life next?");
+    if (count === 4) toast("info", t("toast.fourToday"), t("toast.fourTodayText"));
   } catch (error) {
     store.ui({ debriefLoading: false });
-    toast("error", "The mentor couldn't finish the debrief", message(error));
+    toast("error", t("toast.debriefFailed"), message(error));
   }
 }
 
@@ -831,7 +867,7 @@ export async function askMentor(question: string): Promise<void> {
     });
   } catch (error) {
     store.ui({ mentorAsking: null });
-    toast("error", "Your mentor couldn't answer", message(error));
+    toast("error", t("toast.askFailed"), message(error));
   }
 }
 
