@@ -13,10 +13,11 @@ import {
 import type { Debrief, Delivery, Destination, Expedition, ExpeditionContext, MediationScene, NpcCard, NpcTurn, PartyId, Persona, PlayerContext, PlayerTurn, TranscriptEntry } from "../../shared/schemas.ts";
 import { SKILL_IDS, skillLevelName } from "../../shared/skills.ts";
 import type { ScenarioId } from "../../shared/world.ts";
+import type { Assignment, ClassResultInput } from "../../shared/classroom.ts";
 import { ApiError, api, setAccessCode } from "../lib/api.ts";
 import { voiceLine } from "../lib/voice.ts";
 import { store } from "./store.ts";
-import type { DebriefResult, EncounterState, GameState, MediationState, PlayerProfile, Screen, Settings, Toast } from "./types.ts";
+import type { ClassroomSave, DebriefResult, EncounterState, GameState, MediationState, PlayerProfile, Screen, Settings, Toast } from "./types.ts";
 
 // ── Small helpers ────────────────────────────────────────────────────────
 let toastSeq = 0;
@@ -566,9 +567,85 @@ export async function submitMediationReflection(selfRating: number, selfNote: st
         ui: { ...st.ui, debriefLoading: false, screen: "debrief" },
       };
     });
+    const done = store.get().active.debrief;
+    if (done?.encounterId === mediation.id) {
+      void shareWithClass(mediation.expeditionId, {
+        kind: "mediation",
+        with: done.npcName,
+        headline: debrief.headline,
+        scores: debrief.scores,
+        growthSkill: debrief.growth.skill,
+        goalAchieved: debrief.goalAchieved,
+        selfRating,
+        calibrationGap: done.calibrationGap,
+        xp: done.xp.total,
+      });
+    }
   } catch (error) {
     store.ui({ debriefLoading: false });
     toast("error", "The mentor couldn't review this one", message(error));
+  }
+}
+
+// ── Classroom ─────────────────────────────────────────────────────────────
+function patchClassroom(fn: (c: ClassroomSave) => ClassroomSave): void {
+  store.set((s) => ({ ...s, classroom: fn(s.classroom ?? {}) }));
+}
+
+export async function createClass(name: string, teacherName: string): Promise<boolean> {
+  try {
+    const created = await api.classes.create({ name, teacherName });
+    patchClassroom((c) => ({ ...c, teacher: { code: created.code, teacherKey: created.teacherKey, className: name } }));
+    return true;
+  } catch (error) {
+    toast("error", "Couldn't create the class", message(error));
+    return false;
+  }
+}
+
+export async function joinClass(code: string, name: string): Promise<boolean> {
+  try {
+    const joined = await api.classes.join(code.trim().toUpperCase(), { name });
+    patchClassroom((c) => ({ ...c, student: { code: joined.view.code, studentId: joined.studentId, name, className: joined.view.name } }));
+    toast("success", `You joined ${joined.view.name}`, "Your teacher sees your name and how your assignments went — never your conversations.");
+    return true;
+  } catch (error) {
+    toast("error", "Couldn't join the class", message(error));
+    return false;
+  }
+}
+
+export function leaveClass(role: "student" | "teacher"): void {
+  patchClassroom((c) => ({ ...c, [role]: undefined }));
+}
+
+/** Start an assigned expedition with its focus skill; its results will go to the class. */
+export async function startAssignment(assignment: Assignment, code: string): Promise<void> {
+  const s = store.get();
+  if (!s.player) return;
+  setFocusSkill(assignment.focusSkill);
+  const before = s.expeditions[0]?.id;
+  await startExpedition(assignment.destination);
+  const started = store.get().expeditions[0];
+  if (started && started.id !== before) {
+    patchClassroom((c) => ({ ...c, assignments: { ...c.assignments, [started.id]: { code, assignmentId: assignment.id, title: assignment.title } } }));
+  }
+}
+
+/** After a debrief: an assigned expedition's summary goes to the class (scores and headline, never the conversation). */
+async function shareWithClass(expeditionId: string, input: Omit<ClassResultInput, "studentId" | "assignmentId">): Promise<void> {
+  const s = store.get();
+  const link = s.classroom?.assignments?.[expeditionId];
+  const student = s.classroom?.student;
+  if (!link || !student || student.code !== link.code) return;
+  const mark = (status: "sent" | "failed") =>
+    store.set((st) => (st.active.debrief ? { ...st, active: { ...st.active, debrief: { ...st.active.debrief, shared: { className: student.className, status } } } } : st));
+  try {
+    await api.classes.submit(link.code, { ...input, studentId: student.studentId, assignmentId: link.assignmentId });
+    mark("sent");
+  } catch (error) {
+    mark("failed");
+    toast("error", "Couldn't share with your class", message(error));
   }
 }
 
@@ -710,6 +787,20 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
         ui: { ...st.ui, debriefLoading: false, screen: "debrief" },
       };
     });
+    const done = store.get().active.debrief;
+    if (done) {
+      void shareWithClass(encounter.expeditionId, {
+        kind: "local",
+        with: done.npcName,
+        headline: debrief.headline,
+        scores: debrief.scores,
+        growthSkill: debrief.growth.skill,
+        goalAchieved: debrief.goalAchieved,
+        selfRating,
+        calibrationGap: done.calibrationGap,
+        xp: done.xp.total,
+      });
+    }
     const count = store.get().progress.daily[today()] ?? 0;
     if (count === 4) toast("info", "Four conversations today — great practice!", "Why not try your field mission with someone in real life next?");
   } catch (error) {

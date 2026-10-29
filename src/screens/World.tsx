@@ -323,6 +323,11 @@ export function ExpeditionScreen() {
                       </div>
                     </div>
                     <p className="local-card__hook">“{npc.hook}”</p>
+                    {npc.walk ? (
+                      <p className="muted small" title="Walking time from Google Maps">
+                        🚶 {npc.walk.minutes} min walk from where you arrive
+                      </p>
+                    ) : null}
                     <p className="tags">
                       <LensTag lens={npc.lens} />
                       <span className="tag">

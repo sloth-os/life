@@ -359,6 +359,10 @@ export class GameEngine {
     const onProgress = progress?.onProgress((p) => sendBriefing(p.output));
     const draft = await this.#deps.ai.composeExpedition({ destination: request.destination, pack, player: request.player, suggestedDifficulty: suggestedDifficulty(profile) }, signal, onProgress);
     const expedition = finalizeExpedition(draft, pack, request, this.#deps.ai.mode);
+    // Google mode: how far each local is on foot (Maps agent tools), when enabled.
+    const googlePlace = (n: NpcCard) => (n.placeSourceId ? pack.places.find((p) => p.sourceId === n.placeSourceId)?.kind === "google_place" : false);
+    const walks = await this.#deps.grounding.walkingTimes(pack.center, expedition.npcs.map((n) => (googlePlace(n) ? n.location : undefined)));
+    expedition.npcs = expedition.npcs.map((n, i) => (walks[i] ? { ...n, walk: walks[i] } : n));
     if (!briefed && onEvent) {
       briefed = true;
       onEvent({ type: "briefing", briefing: expedition });

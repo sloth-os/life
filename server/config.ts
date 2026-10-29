@@ -54,8 +54,8 @@ export interface ServerConfig {
   googleMapId: string;
   /** Key for Maps Experience agent tools (MCP). */
   googleMapsServerKey?: string;
-  /** Ask the agent tools for review-based place insights (a Pro option, billed higher). */
-  mapsAgentToolsPro: boolean;
+  /** Walking times from the arrival point to each local, via the agent tools' compute_routes (billed per route). */
+  mapsWalkingRoutes: boolean;
   /** Classroom mode keeps classes and their results on disk under `dataDir`. */
   classroom: boolean;
   dataDir: string;
@@ -203,7 +203,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: string[] 
     googleMapsApiKey: mapsMode === "google" ? browserKey : undefined,
     googleMapId: value("GOOGLE_MAPS_MAP_ID") ?? "DEMO_MAP_ID",
     googleMapsServerKey: mapsMode === "google" ? value("GOOGLE_MAPS_SERVER_KEY") : undefined,
-    mapsAgentToolsPro: value("MAPS_AGENT_TOOLS_PRO") === "true",
+    mapsWalkingRoutes: value("MAPS_WALKING_ROUTES") === "true",
     classroom: value("CLASSROOM") !== "off",
     dataDir: value("DATA_DIR") ?? "data",
     accessCode: value("ACCESS_CODE"),

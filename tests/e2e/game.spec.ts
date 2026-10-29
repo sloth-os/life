@@ -111,3 +111,38 @@ test("mediate between two locals at odds, then get mentored", async ({ page }) =
   await expect(debrief.getByRole("heading", { level: 1 })).not.toBeEmpty();
   await expect(debrief.getByText(/&/).first()).toBeVisible();
 });
+
+test("classroom: a teacher assigns an expedition, a student completes it, the class debrief shows it", async ({ page: teacher, browser }, testInfo) => {
+  await onboard(teacher, "Rivera");
+  await teacher.getByRole("navigation", { name: "Main" }).getByRole("button", { name: /Class/ }).click();
+  await teacher.getByTestId("class-name-input").fill("9B Global Citizenship");
+  await teacher.getByTestId("create-class").click();
+  const code = (await teacher.getByTestId("class-code").innerText()).trim();
+  expect(code).toMatch(/^[A-Z2-9]{6}$/);
+  await teacher.getByTestId("assign-place").selectOption("nairobi");
+  await teacher.getByTestId("assign-skill").selectOption("listening");
+  await teacher.getByTestId("add-assignment").click();
+  await expect(teacher.getByTestId("assignment-report")).toHaveCount(1);
+
+  // A student in another browser joins with the code and does the assignment.
+  const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL });
+  const student = await context.newPage();
+  await onboard(student, "Lin");
+  await student.getByRole("navigation", { name: "Main" }).getByRole("button", { name: /Class/ }).click();
+  await student.getByTestId("class-code-input").fill(code);
+  await student.getByTestId("join-class").click();
+  await expect(student.getByTestId("student-class")).toContainText("Nairobi: Listening");
+  await student.getByTestId("start-assignment").click();
+  await expect(student.getByText("Say hello in Swahili")).toBeVisible();
+  await student.getByTestId("meet-npc-1").click();
+  await say(student, "Habari! What are you working on today?");
+  await say(student, "Thank you for sharing. Take care, goodbye!");
+  await student.getByTestId("rate-3").click();
+  await student.getByTestId("get-feedback").click();
+  await expect(student.getByTestId("shared-with-class")).toContainText("Shared with 9B Global Citizenship");
+  await context.close();
+
+  await teacher.getByTestId("refresh-dashboard").click();
+  await expect(teacher.getByTestId("completed")).toHaveText("1 of 1");
+  await expect(teacher.getByTestId("assignment-report")).toContainText("Lin");
+});

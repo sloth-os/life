@@ -7,7 +7,7 @@ import { LENS_IDS, LENSES, type LensId } from "../../shared/world.ts";
 import type { ServerConfig } from "../config.ts";
 import { TtlCache } from "../util/cache.ts";
 import { settle, type FetchLike } from "../util/http.ts";
-import type { MapsAgentTools } from "./mapsAgentTools.ts";
+import type { AgentWalk, MapsAgentTools } from "./mapsAgentTools.ts";
 import { nominatimReverse, nominatimSearch, openMeteoNow, type LocalConditions } from "./openData.ts";
 import { wikiArticle, wikiNearby, wikiSearch, type WikiArticle } from "./wikipedia.ts";
 
@@ -50,7 +50,7 @@ export interface GroundingPack {
 }
 
 export interface GroundingDeps {
-  config: Pick<ServerConfig, "mapsMode" | "userAgent" | "wikipediaLang">;
+  config: Pick<ServerConfig, "mapsMode" | "userAgent" | "wikipediaLang"> & Partial<Pick<ServerConfig, "mapsWalkingRoutes">>;
   mapsTools?: MapsAgentTools;
   fetchImpl?: FetchLike;
   log?: (message: string) => void;
@@ -73,6 +73,32 @@ export class GroundingService {
 
   get placeGrounding(): "google" | "wikipedia" {
     return this.#deps.config.mapsMode === "google" && this.#deps.mapsTools ? "google" : "wikipedia";
+  }
+
+  /**
+   * Walking times from the arrival point to each Google place (undefined where there's none), when
+   * MAPS_WALKING_ROUTES is on. Each route is a billed call, so they run in parallel and give up quickly.
+   */
+  async walkingTimes(from: LatLng, to: (LatLng | undefined)[]): Promise<(AgentWalk | undefined)[]> {
+    const tools = this.#deps.mapsTools;
+    if (!tools || !this.#deps.config.mapsWalkingRoutes) return to.map(() => undefined);
+    const deadline = new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8_000));
+    return Promise.all(
+      to.map((point) =>
+        point
+          ? Promise.race([
+              tools.walkingRoute(from, point).then(
+                (walk) => walk ?? undefined,
+                (error: unknown) => {
+                  this.#log(`[grounding] compute_routes failed: ${error instanceof Error ? error.message : String(error)}`);
+                  return undefined;
+                },
+              ),
+              deadline,
+            ])
+          : undefined,
+      ),
+    );
   }
 
   cached(expeditionId: string): GroundingPack | undefined {

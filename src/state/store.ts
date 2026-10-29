@@ -33,8 +33,8 @@ export function purgeExpiredMapsContent(save: SaveData, now = Date.now()): SaveD
     ...save,
     expeditions: save.expeditions
       .filter((e) => !(e.mapsMode === "google" && googleDestination(e.destination) && expired(e.createdAt)))
-      .map((e) => (e.mapsMode === "google" && expired(e.createdAt) ? { ...e, npcs: e.npcs.map(({ location: _drop, ...npc }) => npc) } : e)),
-    people: save.people.map((p) => (p.npc.location && p.npc.mapsUrl && expired(p.metAt) ? { ...p, npc: { ...p.npc, location: undefined } } : p)),
+      .map((e) => (e.mapsMode === "google" && expired(e.createdAt) ? { ...e, npcs: e.npcs.map(({ location: _drop, walk: _walk, ...npc }) => npc) } : e)),
+    people: save.people.map((p) => (p.npc.location && p.npc.mapsUrl && expired(p.metAt) ? { ...p, npc: { ...p.npc, location: undefined, walk: undefined } } : p)),
     atlas: save.atlas.map((a) =>
       googleDestination(a.destination) && expired(a.visitedAt) && !a.coordinatesExpired
         ? { ...a, destination: { ...a.destination, lat: 0, lng: 0 }, coordinatesExpired: true }
@@ -64,6 +64,11 @@ function loadSave(): SaveData {
     if (encounter?.awaiting) {
       const transcript = encounter.transcript.at(-1)?.speaker === "player" ? encounter.transcript.slice(0, -1) : encounter.transcript;
       merged.active.encounter = { ...encounter, transcript, awaiting: false, streaming: null };
+    }
+    const mediation = merged.active.mediation;
+    if (mediation?.awaiting) {
+      const transcript = mediation.transcript.at(-1)?.speaker === "player" ? mediation.transcript.slice(0, -1) : mediation.transcript;
+      merged.active.mediation = { ...mediation, transcript, awaiting: false, streaming: null };
     }
     return purgeExpiredMapsContent(merged);
   } catch {

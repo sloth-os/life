@@ -21,7 +21,7 @@ import type {
 import type { SkillId } from "../../shared/skills.ts";
 import type { LensId, ScenarioId } from "../../shared/world.ts";
 
-export type Screen = "title" | "onboarding" | "world" | "expedition" | "encounter" | "mediation" | "debrief" | "journal" | "compass" | "settings";
+export type Screen = "title" | "onboarding" | "world" | "expedition" | "encounter" | "mediation" | "debrief" | "journal" | "compass" | "classroom" | "settings";
 
 export interface PlayerProfile {
   name: string;
@@ -169,6 +169,16 @@ export interface DebriefResult {
   insights: Insight[];
   /** Follow-up questions to the mentor about this debrief. */
   qa?: { question: string; answer: string; followUps: string[] }[];
+  /** Shared with the class this assignment came from: "sent", or why it couldn't be. */
+  shared?: { className: string; status: "sent" | "failed" };
+}
+
+/** Classroom mode, as this browser takes part: a student in a class, a teacher of one, or both. */
+export interface ClassroomSave {
+  student?: { code: string; studentId: string; name: string; className: string };
+  teacher?: { code: string; teacherKey: string; className: string };
+  /** Expeditions started from an assignment, so their results go to the class. */
+  assignments?: Record<string, { code: string; assignmentId: string; title: string }>;
 }
 
 export interface SaveData {
@@ -179,6 +189,8 @@ export interface SaveData {
   journal: { insights: JournalInsight[]; phrases: JournalPhrase[]; missions: Mission[]; reflections: Reflection[] };
   people: PersonEntry[];
   atlas: AtlasEntry[];
+  /** Absent in saves from before classroom mode. */
+  classroom?: ClassroomSave;
   /** Expeditions kept for revisits (most recent first, capped). */
   expeditions: Expedition[];
   active: {

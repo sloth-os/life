@@ -187,6 +187,14 @@ export function DebriefScreen() {
           </section>
         ) : null}
 
+        {result.shared ? (
+          <p className={`notice small${result.shared.status === "failed" ? " notice--error" : ""}`} role="status" data-testid="shared-with-class">
+            {result.shared.status === "sent"
+              ? `🎓 Shared with ${result.shared.className}: your scores and the mentor's headline (not the conversation).`
+              : `🎓 Couldn't share this with ${result.shared.className}. It's saved here; try another assignment later.`}
+          </p>
+        ) : null}
+
         <MentorChat result={result} />
 
         <section className="card mission-card" aria-labelledby="mission-title">

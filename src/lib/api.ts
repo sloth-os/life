@@ -1,3 +1,4 @@
+import type { Assignment, AssignmentInput, ClassDashboard, ClassResultInput, CreateClassRequest, JoinClassRequest, StudentClassView } from "../../shared/classroom.ts";
 import type {
   ApiErrorBody,
   AskRequest,
@@ -97,6 +98,21 @@ async function call<T>(path: string, body?: unknown, signal?: AbortSignal): Prom
   return (await response.json()) as T;
 }
 
+/** Any method, with extra headers (the teacher's key), answering JSON or nothing. */
+async function send<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, { method, headers: { ...headers(body !== undefined), ...extra }, body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch {
+    throw new ApiError(0, "offline", "Couldn't reach the game server. Check your connection.");
+  }
+  if (!response.ok) throw await asError(response);
+  return (response.status === 204 ? undefined : await response.json()) as T;
+}
+
+const teacher = (key: string) => ({ "X-Teacher-Key": key });
+const classPath = (code: string, rest = "") => `/api/classes/${encodeURIComponent(code)}${rest}`;
+
 /** POST that answers with bytes (speech, images). */
 async function binary(path: string, body: unknown, signal?: AbortSignal): Promise<Blob> {
   let response: Response;
@@ -180,4 +196,13 @@ export const api = {
   listen: (body: ListenRequest) => call<Heard>("/api/voice/listen", body),
   pronounce: (body: PronounceRequest) => call<PronunciationResult>("/api/voice/pronounce", body),
   postcard: (body: PostcardRequest) => binary("/api/postcard", body),
+  classes: {
+    create: (body: CreateClassRequest) => send<{ code: string; teacherKey: string }>("POST", "/api/classes", body),
+    view: (code: string) => send<StudentClassView>("GET", classPath(code)),
+    join: (code: string, body: JoinClassRequest) => send<{ studentId: string; view: StudentClassView }>("POST", classPath(code, "/join"), body),
+    submit: (code: string, body: ClassResultInput) => send<void>("POST", classPath(code, "/results"), body),
+    dashboard: (code: string, key: string) => send<ClassDashboard>("GET", classPath(code, "/dashboard"), undefined, teacher(key)),
+    assign: (code: string, key: string, body: AssignmentInput) => send<Assignment>("POST", classPath(code, "/assignments"), body, teacher(key)),
+    unassign: (code: string, key: string, id: string) => send<void>("DELETE", classPath(code, `/assignments/${encodeURIComponent(id)}`), undefined, teacher(key)),
+  },
 };

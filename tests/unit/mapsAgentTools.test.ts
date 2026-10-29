@@ -6,7 +6,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import express from "express";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { MapsAgentTools, buildLocationBias, parsePlaceSearch, parseWeather, payloadOf } from "../../server/grounding/mapsAgentTools.ts";
+import { MapsAgentTools, buildLocationBias, parsePlaceSearch, parseRoute, parseWeather, payloadOf } from "../../server/grounding/mapsAgentTools.ts";
 
 describe("payload parsing", () => {
   it("prefers structuredContent, then JSON text, then plain text", () => {
@@ -32,6 +32,15 @@ describe("payload parsing", () => {
   it("summarizes weather from nested fields", () => {
     const weather = parseWeather({ currentConditions: { temperature: { degrees: 26.6, unit: "CELSIUS" }, weatherCondition: { description: { text: "Light rain" } }, isDaytime: true } });
     expect(weather).toMatchObject({ summary: "27°C, Light rain", tempC: 27, condition: "Light rain", isDay: true });
+  });
+});
+
+describe("parseRoute", () => {
+  it("reads duration and distance in either convention, filling in what's missing", () => {
+    expect(parseRoute({ routes: [{ duration: "600s", distanceMeters: 800 }] })).toEqual({ minutes: 10, meters: 800 });
+    expect(parseRoute({ routes: [{ static_duration: { seconds: 120 }, distance_meters: 150 }] })).toEqual({ minutes: 2, meters: 150 });
+    expect(parseRoute({ routes: [{ distance_meters: 390 }] })).toEqual({ minutes: 5, meters: 390 });
+    expect(parseRoute({ routes: [] })).toBeNull();
   });
 });
 
@@ -90,6 +99,17 @@ describe("MapsAgentTools over MCP", () => {
         calls.push({ tool: "lookup_weather", args });
         return { content: [{ type: "text" as const, text: JSON.stringify({ currentConditions: { temperature: { degrees: 24.2 }, weatherCondition: { description: { text: "Partly cloudy" } }, isDaytime: true } }) }] };
       });
+      mcp.registerTool(
+        "compute_routes",
+        {
+          description: "Routes",
+          inputSchema: { origin: z.object({ lat_lng: z.object({ latitude: z.number(), longitude: z.number() }) }), destination: z.object({ lat_lng: z.object({ latitude: z.number(), longitude: z.number() }) }), travel_mode: z.string().optional() },
+        },
+        async (args) => {
+          calls.push({ tool: "compute_routes", args });
+          return { content: [{ type: "text" as const, text: JSON.stringify({ routes: [{ distanceMeters: 742, duration: "561s" }] }) }] };
+        },
+      );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on("close", () => {
         void transport.close();
@@ -120,6 +140,13 @@ describe("MapsAgentTools over MCP", () => {
 
     const weather = await tools.lookupWeather({ lat: -1.28, lng: 36.82 });
     expect(weather).toMatchObject({ summary: "24°C, Partly cloudy", isDay: true });
+
+    expect(await tools.walkingRoute({ lat: -1.28, lng: 36.82 }, { lat: -1.2833, lng: 36.8271 })).toEqual({ minutes: 9, meters: 742 });
+    expect(calls.find((c) => c.tool === "compute_routes")!.args).toEqual({
+      origin: { lat_lng: { latitude: -1.28, longitude: 36.82 } },
+      destination: { lat_lng: { latitude: -1.2833, longitude: 36.8271 } },
+      travel_mode: "WALK",
+    });
     await tools.close();
   });
 });

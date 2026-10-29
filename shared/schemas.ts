@@ -80,6 +80,8 @@ export const NpcCardSchema = z.object({
   hook: text(240),
   goal: text(200),
   hue: z.number().min(0).max(360),
+  /** Google mode: how far a walk the local is from where the player arrives (Maps agent tools). */
+  walk: z.object({ minutes: z.number(), meters: z.number() }).optional(),
 });
 export type NpcCard = z.infer<typeof NpcCardSchema>;
 

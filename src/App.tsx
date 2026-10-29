@@ -9,6 +9,7 @@ import { DebriefScreen } from "./screens/Debrief.tsx";
 import { EncounterScreen } from "./screens/Encounter.tsx";
 import { AccessGate, OnboardingScreen, TitleScreen } from "./screens/Intro.tsx";
 import { JournalScreen } from "./screens/Journal.tsx";
+import { ClassroomScreen } from "./screens/Classroom.tsx";
 import { MediationScreen } from "./screens/Mediation.tsx";
 import { ArrivingScreen, ExpeditionScreen, ScoutingOverlay, WorldScreen } from "./screens/World.tsx";
 import { currentExpedition, go, loadConfig } from "./state/actions.ts";
@@ -86,10 +87,11 @@ function MapStage({ config, visible, dark }: { config: AppConfig; visible: boole
   );
 }
 
-const NAV: { screen: Screen; label: string; icon: string }[] = [
+const NAV: { screen: Screen; label: string; icon: string; classroom?: true }[] = [
   { screen: "world", label: "World", icon: "🌍" },
   { screen: "journal", label: "Journal", icon: "📔" },
   { screen: "compass", label: "Compass", icon: "🧭" },
+  { screen: "classroom", label: "Class", icon: "🎓", classroom: true },
   { screen: "settings", label: "Settings", icon: "⚙️" },
 ];
 
@@ -106,7 +108,7 @@ function TopBar() {
         <span>Common Ground</span>
       </button>
       <nav aria-label="Main">
-        {NAV.map((item) => (
+        {NAV.filter((item) => !item.classroom || game.ui.config?.features.classroom).map((item) => (
           <button
             key={item.screen}
             type="button"
@@ -188,6 +190,7 @@ export function App() {
           {inGame && screen === "debrief" ? <DebriefScreen /> : null}
           {inGame && screen === "journal" ? <JournalScreen /> : null}
           {inGame && screen === "compass" ? <CompassScreen /> : null}
+          {inGame && screen === "classroom" ? <ClassroomScreen /> : null}
           {inGame && screen === "settings" ? <SettingsScreen /> : null}
         </main>
         {game.ui.busy ? <ScoutingOverlay /> : null}

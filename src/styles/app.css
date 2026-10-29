@@ -2710,3 +2710,126 @@ textarea:focus {
 .msg--party-b .bubble {
   background: color-mix(in srgb, var(--accent-2) 14%, var(--surface-2));
 }
+
+/* Classroom */
+.classroom__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.class-form {
+  display: grid;
+  gap: 10px;
+}
+
+.class-code {
+  font-size: 1.1rem;
+}
+
+.class-code strong {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 1.6rem;
+  letter-spacing: 0.18em;
+  margin-left: 6px;
+  padding: 2px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.assignments,
+.reports {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.assignment {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.assignment h3,
+.report h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.assign-form {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.report-head {
+  align-items: center;
+  gap: 10px;
+}
+
+.report-head h3 {
+  margin: 8px 0;
+}
+
+.report__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.report__skills {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.report__skills div {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.report__skills dt {
+  font-size: 0.86rem;
+}
+
+.report__skills dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.report__bar {
+  display: inline-block;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent-2);
+  max-width: 70%;
+}
+
+.report__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.report__table th,
+.report__table td {
+  text-align: left;
+  padding: 6px 4px;
+  border-top: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.notice--error {
+  border-color: var(--danger, #c0392b);
+}

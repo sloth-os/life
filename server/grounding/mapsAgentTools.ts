@@ -35,6 +35,12 @@ export interface AgentWeather {
   details: string;
 }
 
+/** A walk between two points, from compute_routes. */
+export interface AgentWalk {
+  minutes: number;
+  meters: number;
+}
+
 type Json = Record<string, unknown>;
 interface ToolDef {
   name: string;
@@ -165,6 +171,29 @@ export interface MapsAgentToolsOptions {
   version?: string;
 }
 
+/** Seconds from "754s", 754 or { seconds: 754 }. */
+function seconds(value: unknown): number | undefined {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const n = Number.parseFloat(value);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  if (isObject(value)) return seconds(value.seconds);
+  return undefined;
+}
+
+/** The first route's duration and distance, in either case convention. */
+export function parseRoute(payload: unknown): AgentWalk | null {
+  const routes = findKey(payload, ["routes"]);
+  const route = Array.isArray(routes) ? routes[0] : payload;
+  const s = seconds(findKey(route, ["duration", "staticDuration", "static_duration"]));
+  const m = Number(findKey(route, ["distanceMeters", "distance_meters"]));
+  if (s === undefined && !Number.isFinite(m)) return null;
+  // A walking pace of about 1.3 m/s fills in whichever is missing.
+  const meters = Number.isFinite(m) ? Math.round(m) : Math.round((s ?? 0) * 1.3);
+  return { minutes: Math.max(1, Math.round((s ?? meters / 1.3) / 60)), meters };
+}
+
 export class MapsAgentTools {
   readonly #opts: MapsAgentToolsOptions;
   #client: Promise<{ client: Client; tools: Map<string, ToolDef> }> | null = null;
@@ -226,6 +255,13 @@ export class MapsAgentTools {
       return args;
     });
     return parsePlaceSearch(payload);
+  }
+
+  /** How long a walk it is between two points (compute_routes, WALK). */
+  async walkingRoute(from: LatLng, to: LatLng): Promise<AgentWalk | null> {
+    const point = (p: LatLng) => ({ lat_lng: { latitude: p.lat, longitude: p.lng } });
+    const payload = await this.#call("compute_routes", () => ({ origin: point(from), destination: point(to), travel_mode: "WALK" }));
+    return parseRoute(payload);
   }
 
   async lookupWeather(center: LatLng): Promise<AgentWeather> {

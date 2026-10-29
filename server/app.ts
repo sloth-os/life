@@ -19,7 +19,9 @@ import {
   type Heard,
   type PronunciationResult,
 } from "../shared/schemas.ts";
+import { AssignmentInputSchema, ClassResultInputSchema, CreateClassRequestSchema, JoinClassRequestSchema } from "../shared/classroom.ts";
 import { isWav, wavDurationMs, type VoiceService } from "./ai/voice.ts";
+import type { ClassroomStore } from "./classroom/store.ts";
 import { postcardPrompt, type ImageGateway } from "./images.ts";
 import type { ServerConfig } from "./config.ts";
 import type { EngineEvent, GameEngine, OnEngineEvent } from "./game/engine.ts";
@@ -36,6 +38,8 @@ export interface AppDeps {
   voice?: VoiceService;
   /** Postcard illustrations: present when mm-gateway is configured. */
   images?: ImageGateway;
+  /** Classroom mode: present when enabled (CLASSROOM, on by default). */
+  classroom?: ClassroomStore;
   log?: (message: string) => void;
 }
 
@@ -65,7 +69,7 @@ function abortOnClose(res: Response): AbortSignal {
 }
 
 export function createApp(deps: AppDeps): express.Express {
-  const { config, engine, grounding, voice, images } = deps;
+  const { config, engine, grounding, voice, images, classroom } = deps;
   const log = deps.log ?? ((m: string) => console.error(m));
   const app = express();
   app.disable("x-powered-by");
@@ -90,7 +94,7 @@ export function createApp(deps: AppDeps): express.Express {
       voice: Boolean(voice),
       voiceOutput: voice && voice.canSpeak !== false ? "model" : "browser",
       postcards: Boolean(images),
-      classroom: config.classroom,
+      classroom: Boolean(classroom),
       flyIns: config.mapsMode === "google",
     },
   };
@@ -270,6 +274,53 @@ export function createApp(deps: AppDeps): express.Express {
       if (painted.size > 50) painted.delete(painted.keys().next().value!);
     }
     res.set({ "Content-Type": image.mimeType, "Cache-Control": "private, max-age=86400" }).send(image.bytes);
+  });
+
+  // ── Classroom ───────────────────────────────────────────────────────────
+  const requireClassroom = (): ClassroomStore => {
+    if (!classroom) throw new HttpError(404, "classroom_off", "Classroom mode isn't enabled on this server.");
+    return classroom;
+  };
+  // Creating and joining classes writes to disk: a tighter limit per IP than gameplay.
+  const classLimit = new RateLimiter(Math.max(30, config.rateLimitPer10Min), 60 * 60 * 1000);
+  const limitClasses = (req: Request, _res: Response, next: NextFunction) => {
+    if (!classLimit.allow(req.ip ?? "unknown")) throw new HttpError(429, "rate_limited", "That's a lot of classes — try again in a while.");
+    next();
+  };
+  const teacherKey = (req: Request) => req.get("x-teacher-key") ?? undefined;
+  const param = (req: Request, name: string) => String(req.params[name] ?? "");
+
+  api.post("/classes", limitClasses, (req, res) => {
+    const body = parse(CreateClassRequestSchema, req.body);
+    res.status(201).json(requireClassroom().create(body.name, body.teacherName));
+  });
+
+  api.get("/classes/:code", (req, res) => {
+    res.json(requireClassroom().view(param(req, "code")));
+  });
+
+  api.post("/classes/:code/join", limitClasses, (req, res) => {
+    const body = parse(JoinClassRequestSchema, req.body);
+    res.status(201).json(requireClassroom().join(param(req, "code"), body.name));
+  });
+
+  api.post("/classes/:code/results", rateLimit, (req, res) => {
+    requireClassroom().submit(param(req, "code"), parse(ClassResultInputSchema, req.body));
+    res.status(204).end();
+  });
+
+  api.get("/classes/:code/dashboard", (req, res) => {
+    res.json(requireClassroom().dashboard(param(req, "code"), teacherKey(req)));
+  });
+
+  api.post("/classes/:code/assignments", rateLimit, (req, res) => {
+    const body = parse(AssignmentInputSchema, req.body);
+    res.status(201).json(requireClassroom().addAssignment(param(req, "code"), teacherKey(req), body));
+  });
+
+  api.delete("/classes/:code/assignments/:id", (req, res) => {
+    requireClassroom().removeAssignment(param(req, "code"), teacherKey(req), param(req, "id"));
+    res.status(204).end();
   });
 
   api.use((_req, res) => {
