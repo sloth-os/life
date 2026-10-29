@@ -50,6 +50,26 @@ describe("API", () => {
     expect(config.googleMapsApiKey).toBeUndefined();
   });
 
+  it("streams progress, the briefing and then the expedition when asked for events", async () => {
+    const api = await start();
+    const response = await post(`${api}/expedition`, { destination, player }, { accept: "text/event-stream" });
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const events = await sseEvents(response);
+    const names = events.map((e) => e.event);
+    expect(names[0]).toBe("progress");
+    expect(events[0]!.data).toMatchObject({ phase: "grounding" });
+    expect(names.indexOf("briefing")).toBeLessThan(names.indexOf("result"));
+    const briefing = events.find((e) => e.event === "briefing")!.data as { title: string; greeting: { phrase: string } };
+    const expedition = events.at(-1)!.data as unknown as Expedition;
+    expect(names.at(-1)).toBe("result");
+    expect(briefing.title).toBe(expedition.title);
+    expect(briefing.greeting.phrase).toBe(expedition.greeting.phrase);
+    expect(expedition.npcs).toHaveLength(3);
+
+    const persona = await post(`${api}/npc/persona`, { context: { expeditionId: expedition.id, title: expedition.title, destinationLabel: "Nairobi", locality: expedition.locality, scene: expedition.scene, greeting: expedition.greeting, notes: expedition.notes, sources: [] }, npc: expedition.npcs[0], player }, { accept: "text/event-stream" });
+    expect((await sseEvents(persona)).at(-1)).toMatchObject({ event: "result", data: { npcId: "npc-1" } });
+  });
+
   it("validates requests", async () => {
     const api = await start();
     const bad = await post(`${api}/expedition`, { destination: { lat: 999 }, player });

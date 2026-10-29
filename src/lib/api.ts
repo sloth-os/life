@@ -4,12 +4,14 @@ import type {
   Debrief,
   DebriefRequest,
   Expedition,
+  ExpeditionBriefing,
   ExpeditionRequest,
   GeoResult,
   Hint,
   HintRequest,
   Persona,
   PersonaRequest,
+  StreamProgress,
   TurnRequest,
   TurnResult,
 } from "../../shared/schemas.ts";
@@ -82,11 +84,24 @@ async function call<T>(path: string, body?: unknown, signal?: AbortSignal): Prom
   return (await response.json()) as T;
 }
 
-/** POST that answers with server-sent events: `reply` snapshots, then `result` or `error`. */
-async function turn(body: TurnRequest, onReply: (text: string) => void, signal?: AbortSignal): Promise<TurnResult> {
+/** Handlers for the events a streamed call sends before its `result`. */
+export interface StreamHandlers {
+  signal?: AbortSignal;
+  onProgress?: (progress: StreamProgress) => void;
+  onBriefing?: (briefing: ExpeditionBriefing) => void;
+  /** Text written so far: the local's reply, or the mentor's answer. */
+  onText?: (text: string) => void;
+}
+
+/**
+ * POST that answers with server-sent events (`progress`, `briefing`, `reply`/`answer`
+ * snapshots), then `result` or `error`. Long calls stream so the player sees real progress
+ * and proxies see a live connection.
+ */
+async function stream<T>(path: string, body: unknown, handlers: StreamHandlers = {}, endedMessage = "The connection ended unexpectedly. Try again."): Promise<T> {
   let response: Response;
   try {
-    response = await fetch("/api/npc/turn", { method: "POST", headers: headers(true), body: JSON.stringify(body), signal });
+    response = await fetch(path, { method: "POST", headers: { ...headers(true), Accept: "text/event-stream" }, body: JSON.stringify(body), signal: handlers.signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new ApiError(0, "offline", "Couldn't reach the game server. Check your connection.");
@@ -107,21 +122,27 @@ async function turn(body: TurnRequest, onReply: (text: string) => void, signal?:
       const data = /^data: (.*)$/m.exec(block)?.[1];
       if (!event || data === undefined) continue;
       const payload = JSON.parse(data) as Record<string, unknown>;
-      if (event === "reply") onReply(String(payload.text ?? ""));
-      else if (event === "result") return payload as unknown as TurnResult;
-      else if (event === "error") throw new ApiError(Number(payload.status ?? 500), String(payload.error ?? "error"), String(payload.message ?? "Something went wrong."));
+      if (event === "result") return payload as T;
+      if (event === "error") throw new ApiError(Number(payload.status ?? 500), String(payload.error ?? "error"), String(payload.message ?? "Something went wrong."));
+      if (event === "progress") handlers.onProgress?.(payload as unknown as StreamProgress);
+      else if (event === "briefing") handlers.onBriefing?.(payload as unknown as ExpeditionBriefing);
+      else if (event === "reply" || event === "answer") handlers.onText?.(String(payload.text ?? ""));
     }
     if (done) break;
   }
-  throw new ApiError(502, "stream_ended", "The conversation stream ended unexpectedly. Try sending that again.");
+  throw new ApiError(502, "stream_ended", endedMessage);
+}
+
+function turn(body: TurnRequest, onReply: (text: string) => void, signal?: AbortSignal): Promise<TurnResult> {
+  return stream<TurnResult>("/api/npc/turn", body, { signal, onText: onReply }, "The conversation stream ended unexpectedly. Try sending that again.");
 }
 
 export const api = {
   config: () => call<AppConfig>("/api/config"),
   search: (q: string, signal?: AbortSignal) => call<{ results: GeoResult[] }>(`/api/geo/search?q=${encodeURIComponent(q)}`, undefined, signal),
-  expedition: (body: ExpeditionRequest, signal?: AbortSignal) => call<Expedition>("/api/expedition", body, signal),
-  persona: (body: PersonaRequest, signal?: AbortSignal) => call<Persona>("/api/npc/persona", body, signal),
+  expedition: (body: ExpeditionRequest, handlers?: StreamHandlers) => stream<Expedition>("/api/expedition", body, handlers),
+  persona: (body: PersonaRequest, handlers?: StreamHandlers) => stream<Persona>("/api/npc/persona", body, handlers),
   turn,
   hint: (body: HintRequest) => call<Hint>("/api/coach/hint", body),
-  debrief: (body: DebriefRequest) => call<Debrief>("/api/coach/debrief", body),
+  debrief: (body: DebriefRequest, handlers?: StreamHandlers) => stream<Debrief>("/api/coach/debrief", body, handlers),
 };

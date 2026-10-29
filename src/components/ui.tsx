@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { INSIGHT_THRESHOLDS, rapportTier } from "../../shared/rules.ts";
 import type { Source } from "../../shared/schemas.ts";
 import { SKILL_IDS, SKILLS, type SkillId } from "../../shared/skills.ts";
@@ -193,6 +193,23 @@ export function Toasts({ toasts }: { toasts: Toast[] }) {
 export function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <section className={`panel ${className}`}>{children}</section>;
 }
+
+/** Seconds since `startedAt`, ticking once a second (0 while `startedAt` is null). */
+export function useElapsed(startedAt: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  return startedAt === null ? 0 : Math.max(0, Math.round((now - startedAt) / 1000));
+}
+
+/** 75 → "1:15". */
+export const formatElapsed = (seconds: number): string => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+
+/** 12400 → "12k". */
+export const formatCount = (n: number): string => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
 
 export function Spinner({ label }: { label?: string }) {
   return (

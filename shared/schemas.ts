@@ -101,6 +101,19 @@ export const ExpeditionSchema = z.object({
 });
 export type Expedition = z.infer<typeof ExpeditionSchema>;
 
+/** The part of an expedition the player reads first, while the locals are still being written. */
+export type ExpeditionBriefing = Pick<Expedition, "destination" | "mapsMode" | "locality" | "title" | "scene" | "weather" | "greeting" | "curiosity">;
+
+/** How far a long model call has got, streamed while the player waits. */
+export interface StreamProgress {
+  phase: "grounding" | "thinking" | "writing";
+  elapsedMs: number;
+  /** Characters of model reasoning so far (0 when the model doesn't expose it). */
+  thinking: number;
+  /** Characters of the answer written so far. */
+  written: number;
+}
+
 /** The compact slice of an expedition each later request carries. */
 export const ExpeditionContextSchema = z.object({
   expeditionId: text(40),

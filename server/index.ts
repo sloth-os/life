@@ -22,10 +22,19 @@ const grounding = new GroundingService({ config, mapsTools, log });
 function createAI(): GameAI {
   switch (config.aiProvider) {
     case "anthropic":
-      return new ClaudeGameAI({ client: new Anthropic({ apiKey: config.aiApiKey, baseURL: config.aiBaseUrl, maxRetries: 2 }), model: config.model, effort: config.effort, log });
+      return new ClaudeGameAI({ client: new Anthropic({ apiKey: config.aiApiKey, baseURL: config.aiBaseUrl, maxRetries: 2 }), model: config.model, models: config.models, effort: config.effort, log });
     case "openai":
       // Local servers (Ollama, vLLM) often need no key; the SDK insists on one.
-      return new OpenAIGameAI({ client: new OpenAI({ apiKey: config.aiApiKey ?? "not-needed", baseURL: config.aiBaseUrl, maxRetries: 2 }), model: config.model, jsonMode: config.openaiJsonMode, log });
+      return new OpenAIGameAI({
+        client: new OpenAI({ apiKey: config.aiApiKey ?? "not-needed", baseURL: config.aiBaseUrl, maxRetries: 2 }),
+        model: config.model,
+        models: config.models,
+        jsonMode: config.openaiJsonMode,
+        thinking: config.thinking,
+        thinkingStyle: config.thinkingStyle,
+        effort: config.effort,
+        log,
+      });
     default:
       return new DemoGameAI();
   }

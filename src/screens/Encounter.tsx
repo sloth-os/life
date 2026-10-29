@@ -3,7 +3,7 @@ import { HINTS_PER_ENCOUNTER, PLAYER_MESSAGE_MAX, TURN_SOFT_CAP } from "../../sh
 import type { AppConfig, Expedition, NpcCard } from "../../shared/schemas.ts";
 import { SKILLS } from "../../shared/skills.ts";
 import { LENSES, SCENARIOS, type EmotionId } from "../../shared/world.ts";
-import { Avatar, EmotionChip, LensTag, MoveChips, RapportMeter, Spinner } from "../components/ui.tsx";
+import { Avatar, EmotionChip, LensTag, MoveChips, RapportMeter, Spinner, formatElapsed, useElapsed } from "../components/ui.tsx";
 import { canListen, listen } from "../lib/speech.ts";
 import { createSceneView } from "../map/index.ts";
 import type { SceneView } from "../map/types.ts";
@@ -292,7 +292,11 @@ function Composer({ encounter }: { encounter: EncounterState }) {
 const RATING_LABELS = ["Rough", "Shaky", "Okay", "Good", "Great"];
 
 function Reflection({ encounter }: { encounter: EncounterState }) {
-  const loading = useGame().ui.debriefLoading;
+  const { debriefLoading: loading, debriefProgress: progress } = useGame().ui;
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  useEffect(() => setStartedAt(loading ? Date.now() : null), [loading]);
+  const elapsed = useElapsed(startedAt);
+  const doing = progress?.phase === "writing" ? "Your mentor is writing your feedback…" : progress?.thinking ? "Your mentor is thinking it over…" : "Your mentor is reviewing the conversation…";
   const [rating, setRating] = useState(0);
   const [note, setNote] = useState("");
   const name = encounter.persona.name.split(" ")[0]!;
@@ -323,7 +327,7 @@ function Reflection({ encounter }: { encounter: EncounterState }) {
           <textarea value={note} maxLength={400} rows={2} onChange={(e) => setNote(e.target.value)} />
         </label>
         <button type="submit" className="btn btn--primary" disabled={!rating || loading} data-testid="get-feedback">
-          {loading ? <Spinner label="Your mentor is reviewing the conversation…" /> : "Get feedback"}
+          {loading ? <Spinner label={`${doing} ${formatElapsed(elapsed)}`} /> : "Get feedback"}
         </button>
       </form>
     </div>

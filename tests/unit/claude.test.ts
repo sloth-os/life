@@ -38,7 +38,7 @@ function streamedMessage(text: string, stopReason = "end_turn", extraDelta: Reco
   ]);
 }
 
-const effort: Record<AiTask, Effort> = { expedition: "medium", persona: "medium", turn: "low", hint: "low", debrief: "medium" };
+const effort: Record<AiTask, Effort> = { expedition: "medium", persona: "medium", scene: "medium", turn: "low", hint: "low", debrief: "medium", ask: "low" };
 
 function setup(respond: (call: Call) => Response) {
   const calls: Call[] = [];

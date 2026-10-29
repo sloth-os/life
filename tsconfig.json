@@ -18,5 +18,5 @@
     "jsx": "react-jsx",
     "types": ["node", "google.maps", "vite/client"]
   },
-  "include": ["server", "shared", "src", "tests", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+  "include": ["server", "shared", "src", "tests", "scripts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts", "playwright.real.config.ts"]
 }

@@ -23,6 +23,7 @@ import type {
   Difficulty,
   EndReason,
   Expedition,
+  ExpeditionBriefing,
   ExpeditionRequest,
   Hint,
   HintRequest,
@@ -31,12 +32,14 @@ import type {
   NpcCard,
   Persona,
   PersonaRequest,
+  StreamProgress,
   TurnRequest,
   TurnResult,
 } from "../../shared/schemas.ts";
 import { hashString } from "../ai/demo.ts";
+import { parsePartialObject } from "../ai/partialJson.ts";
 import type { DebriefDraft, ExpeditionDraft, HintDraft, InsightDraft, NpcTurnDraft, PersonaDraft } from "../ai/schemas.ts";
-import type { GameAI } from "../ai/types.ts";
+import type { AiProgress, GameAI, OnProgress } from "../ai/types.ts";
 import type { GroundingPack, GroundingService } from "../grounding/index.ts";
 import { AiOutputError, HttpError } from "../util/errors.ts";
 
@@ -49,6 +52,54 @@ export function offsetPoint(center: LatLng, index: number): LatLng {
   const dLat = (meters * Math.cos(angle)) / 111_320;
   const dLng = (meters * Math.sin(angle)) / (111_320 * Math.max(0.2, Math.cos((center.lat * Math.PI) / 180)));
   return { lat: center.lat + dLat, lng: center.lng + dLng };
+}
+
+type BriefingDraft = Pick<ExpeditionDraft, "title" | "scene" | "locality" | "greeting" | "curiosity">;
+
+export function finalizeBriefing(draft: BriefingDraft, pack: GroundingPack, request: ExpeditionRequest): ExpeditionBriefing {
+  const pick = (packValue: string | undefined, draftValue: string) => trim(packValue || draftValue, 120) || undefined;
+  return {
+    mapsMode: pack.mapsMode,
+    destination: request.destination,
+    locality: {
+      city: pick(pack.locality.city, draft.locality.city),
+      region: pick(pack.locality.region, draft.locality.region),
+      country: pick(pack.locality.country, draft.locality.country),
+    },
+    title: trim(draft.title, 120) || pack.label,
+    scene: trim(draft.scene, 800),
+    weather: pack.weather,
+    greeting: {
+      language: trim(draft.greeting.language, 60) || "the local language",
+      phrase: trim(draft.greeting.phrase, 80) || "Hello",
+      meaning: trim(draft.greeting.meaning, 160),
+      pronunciation: trim(draft.greeting.pronunciation, 80) || undefined,
+    },
+    curiosity: draft.curiosity.slice(0, 3).map((q) => trim(q, 200)).filter(Boolean),
+  };
+}
+
+const str = (value: unknown): string => (typeof value === "string" ? value : "");
+const record = (value: unknown): Record<string, unknown> => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
+
+/** The briefing, once a streaming expedition has written its title, scene, greeting and curiosity board. */
+export function briefingFromPartial(output: string, pack: GroundingPack, request: ExpeditionRequest): ExpeditionBriefing | null {
+  const partial = parsePartialObject(output);
+  const { title, scene, greeting, curiosity } = partial;
+  if (typeof title !== "string" || typeof scene !== "string" || typeof greeting !== "object" || greeting === null || !Array.isArray(curiosity)) return null;
+  const locality = record(partial.locality);
+  const hello = record(greeting);
+  return finalizeBriefing(
+    {
+      title,
+      scene,
+      locality: { city: str(locality.city), region: str(locality.region), country: str(locality.country) },
+      greeting: { language: str(hello.language), phrase: str(hello.phrase), meaning: str(hello.meaning), pronunciation: str(hello.pronunciation) },
+      curiosity: curiosity.filter((q): q is string => typeof q === "string"),
+    },
+    pack,
+    request,
+  );
 }
 
 export function finalizeExpedition(draft: ExpeditionDraft, pack: GroundingPack, request: ExpeditionRequest, aiMode: GameAI["mode"], now = Date.now()): Expedition {
@@ -73,28 +124,11 @@ export function finalizeExpedition(draft: ExpeditionDraft, pack: GroundingPack, 
       hue: hashString(name) % 360,
     };
   });
-  const pick = (packValue: string | undefined, draftValue: string) => trim(packValue || draftValue, 120) || undefined;
   return {
     id: `exp_${now.toString(36)}_${randomBytes(3).toString("hex")}`,
     createdAt: now,
-    mapsMode: pack.mapsMode,
     aiMode,
-    destination: request.destination,
-    locality: {
-      city: pick(pack.locality.city, draft.locality.city),
-      region: pick(pack.locality.region, draft.locality.region),
-      country: pick(pack.locality.country, draft.locality.country),
-    },
-    title: trim(draft.title, 120) || pack.label,
-    scene: trim(draft.scene, 800),
-    weather: pack.weather,
-    greeting: {
-      language: trim(draft.greeting.language, 60) || "the local language",
-      phrase: trim(draft.greeting.phrase, 80) || "Hello",
-      meaning: trim(draft.greeting.meaning, 160),
-      pronunciation: trim(draft.greeting.pronunciation, 80) || undefined,
-    },
-    curiosity: draft.curiosity.slice(0, 3).map((q) => trim(q, 200)).filter(Boolean),
+    ...finalizeBriefing(draft, pack, request),
     npcs,
     sources: pack.sources.slice(0, 40),
     notes: trim(draft.notes, 6000),
@@ -252,6 +286,29 @@ function finalizeHint(draft: HintDraft, request: HintRequest): Hint {
   };
 }
 
+export type EngineEvent = { type: "progress"; progress: StreamProgress } | { type: "briefing"; briefing: ExpeditionBriefing };
+export type OnEngineEvent = (event: EngineEvent) => void;
+
+/** Progress at most every `everyMs`, so a model streaming tokens doesn't flood the player's connection. */
+export function progressReporter(onEvent: OnEngineEvent, started = Date.now(), everyMs = 400) {
+  let lastAt = 0;
+  return {
+    report(phase: StreamProgress["phase"], progress?: AiProgress, force = false): boolean {
+      const now = Date.now();
+      if (!force && now - lastAt < everyMs) return false;
+      lastAt = now;
+      onEvent({ type: "progress", progress: { phase, elapsedMs: now - started, thinking: progress?.thinking ?? 0, written: progress?.output.length ?? 0 } });
+      return true;
+    },
+    /** For model calls: "thinking" until the answer starts, then "writing". */
+    onProgress(extra?: (progress: AiProgress) => void): OnProgress {
+      return (progress) => {
+        if (this.report(progress.output.trim() ? "writing" : "thinking", progress)) extra?.(progress);
+      };
+    },
+  };
+}
+
 export interface GameEngineDeps {
   ai: GameAI;
   grounding: GroundingService;
@@ -268,19 +325,39 @@ export class GameEngine {
     return this.#deps.ai.mode;
   }
 
-  async createExpedition(request: ExpeditionRequest, signal?: AbortSignal): Promise<Expedition> {
+  /**
+   * With `onEvent`, reports progress while grounding and while the model works, and sends
+   * the briefing as soon as the model has written it, before the locals.
+   */
+  async createExpedition(request: ExpeditionRequest, signal?: AbortSignal, onEvent?: OnEngineEvent): Promise<Expedition> {
+    const progress = onEvent ? progressReporter(onEvent) : undefined;
+    progress?.report("grounding", undefined, true);
     const pack = await this.#deps.grounding.gather(request.destination);
     const profile = initialSkillProfile();
     for (const id of SKILL_IDS) profile[id].rating = request.player.skills[id] ?? profile[id].rating;
-    const draft = await this.#deps.ai.composeExpedition({ destination: request.destination, pack, player: request.player, suggestedDifficulty: suggestedDifficulty(profile) }, signal);
+    let briefed = false;
+    const sendBriefing = (output: string) => {
+      if (briefed || !onEvent) return;
+      const briefing = briefingFromPartial(output, pack, request);
+      if (!briefing) return;
+      briefed = true;
+      onEvent({ type: "briefing", briefing });
+    };
+    progress?.report("thinking", undefined, true);
+    const onProgress = progress?.onProgress((p) => sendBriefing(p.output));
+    const draft = await this.#deps.ai.composeExpedition({ destination: request.destination, pack, player: request.player, suggestedDifficulty: suggestedDifficulty(profile) }, signal, onProgress);
     const expedition = finalizeExpedition(draft, pack, request, this.#deps.ai.mode);
+    if (!briefed && onEvent) {
+      briefed = true;
+      onEvent({ type: "briefing", briefing: expedition });
+    }
     this.#deps.grounding.remember(expedition.id, pack);
     return expedition;
   }
 
-  async createPersona(request: PersonaRequest, signal?: AbortSignal): Promise<Persona> {
+  async createPersona(request: PersonaRequest, signal?: AbortSignal, onEvent?: OnEngineEvent): Promise<Persona> {
     const pack = this.#deps.grounding.cached(request.context.expeditionId);
-    const draft = await this.#deps.ai.createPersona({ request, pack }, signal);
+    const draft = await this.#deps.ai.createPersona({ request, pack }, signal, onEvent ? progressReporter(onEvent).onProgress() : undefined);
     const persona = finalizePersona(draft, request.npc);
     if (persona.insights.length === 0) throw new AiOutputError("the local has nothing to share");
     return persona;
@@ -297,7 +374,7 @@ export class GameEngine {
     return finalizeHint(await this.#deps.ai.coachHint(request, signal), request);
   }
 
-  async debrief(request: DebriefRequest, signal?: AbortSignal): Promise<Debrief> {
-    return finalizeDebrief(await this.#deps.ai.debrief(request, signal), request);
+  async debrief(request: DebriefRequest, signal?: AbortSignal, onEvent?: OnEngineEvent): Promise<Debrief> {
+    return finalizeDebrief(await this.#deps.ai.debrief(request, signal, onEvent ? progressReporter(onEvent).onProgress() : undefined), request);
   }
 }

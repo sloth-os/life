@@ -9,10 +9,11 @@ import {
   type AppConfig,
 } from "../shared/schemas.ts";
 import type { ServerConfig } from "./config.ts";
-import type { GameEngine } from "./game/engine.ts";
+import type { EngineEvent, GameEngine, OnEngineEvent } from "./game/engine.ts";
 import type { GroundingService } from "./grounding/index.ts";
 import { RateLimiter } from "./util/cache.ts";
 import { HttpError } from "./util/errors.ts";
+import { openEventStream, wantsEvents } from "./util/sse.ts";
 
 export interface AppDeps {
   config: ServerConfig;
@@ -90,37 +91,48 @@ export function createApp(deps: AppDeps): express.Express {
     res.json({ results: await grounding.search(q) });
   });
 
+  /**
+   * A long model call answers with one JSON body, or, when the browser asks for
+   * `text/event-stream`, with `progress` (and `briefing`) events and then `result`.
+   */
+  async function respond<T>(req: Request, res: Response, tag: string, work: (signal: AbortSignal, onEvent?: OnEngineEvent) => Promise<T>): Promise<void> {
+    const signal = abortOnClose(res);
+    if (!wantsEvents(req)) {
+      res.json(await work(signal));
+      return;
+    }
+    const events = openEventStream(res, log, tag);
+    try {
+      const onEvent = (event: EngineEvent) => events.send(event.type, event.type === "progress" ? event.progress : event.briefing);
+      events.send("result", await work(signal, onEvent));
+    } catch (error) {
+      events.fail(error, "Something went wrong on our side. Try again.");
+    } finally {
+      events.close();
+    }
+  }
+
   api.post("/expedition", rateLimit, async (req, res) => {
     const body = parse(ExpeditionRequestSchema, req.body);
-    res.json(await engine.createExpedition(body, abortOnClose(res)));
+    await respond(req, res, "expedition", (signal, onEvent) => engine.createExpedition(body, signal, onEvent));
   });
 
   api.post("/npc/persona", rateLimit, async (req, res) => {
     const body = parse(PersonaRequestSchema, req.body);
-    res.json(await engine.createPersona(body, abortOnClose(res)));
+    await respond(req, res, "persona", (signal, onEvent) => engine.createPersona(body, signal, onEvent));
   });
 
   // Server-sent events: `reply` snapshots while the local speaks, then `result`.
   api.post("/npc/turn", rateLimit, async (req, res) => {
     const body = parse(TurnRequestSchema, req.body);
     const signal = abortOnClose(res);
-    res.status(200).set({
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-    res.flushHeaders();
-    const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const events = openEventStream(res, log, "turn");
     try {
-      const result = await engine.turn(body, (text) => send("reply", { text }), signal);
-      send("result", result);
+      events.send("result", await engine.turn(body, (text) => events.send("reply", { text }), signal));
     } catch (error) {
-      if (!(error instanceof HttpError) || error.status >= 500) log(`[turn] ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
-      const safe = error instanceof HttpError ? error : new HttpError(500, "internal", "Something went wrong mid-conversation. Try sending that again.");
-      send("error", { error: safe.code, message: safe.message, status: safe.status });
+      events.fail(error, "Something went wrong mid-conversation. Try sending that again.");
     } finally {
-      res.end();
+      events.close();
     }
   });
 
@@ -131,7 +143,7 @@ export function createApp(deps: AppDeps): express.Express {
 
   api.post("/coach/debrief", rateLimit, async (req, res) => {
     const body = parse(DebriefRequestSchema, req.body);
-    res.json(await engine.debrief(body, abortOnClose(res)));
+    await respond(req, res, "debrief", (signal, onEvent) => engine.debrief(body, signal, onEvent));
   });
 
   api.use((_req, res) => {

@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { POSTCARDS, type Postcard } from "../../shared/destinations.ts";
 import { rankFor } from "../../shared/rules.ts";
-import type { Destination, GeoResult } from "../../shared/schemas.ts";
+import type { Destination, ExpeditionBriefing, GeoResult, StreamProgress } from "../../shared/schemas.ts";
 import { SKILLS } from "../../shared/skills.ts";
 import { LENSES, SCENARIOS } from "../../shared/world.ts";
-import { Avatar, Difficulty, LensTag, SourceList, Spinner } from "../components/ui.tsx";
+import { Avatar, Difficulty, LensTag, SourceList, Spinner, formatCount, formatElapsed, useElapsed } from "../components/ui.tsx";
 import { api } from "../lib/api.ts";
 import { canSpeak, speak } from "../lib/speech.ts";
 import { useMap } from "../map/index.ts";
 import type { MapMarker } from "../map/types.ts";
-import { SCOUT_STEPS, currentExpedition, ensurePersona, go, meet, personKey, startExpedition, surpriseDestination, toast } from "../state/actions.ts";
+import { currentExpedition, ensurePersona, go, meet, personKey, startExpedition, surpriseDestination, toast } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 
 const CONTINENTS: Postcard["continent"][] = ["Africa", "Asia", "Europe", "North America", "South America", "Oceania"];
@@ -272,7 +272,6 @@ export function ExpeditionScreen() {
     );
   }
 
-  const where = [expedition.locality.city, expedition.locality.region, expedition.locality.country].filter(Boolean).join(", ");
   const unfinished = game.active.encounter && game.active.encounter.expeditionId === expedition.id && game.active.encounter.status !== "debriefed" ? game.active.encounter : null;
 
   return (
@@ -292,45 +291,7 @@ export function ExpeditionScreen() {
               </button>
             </div>
           ) : null}
-          <header className="expedition-head">
-            <p className="eyebrow">{where || expedition.destination.label}</p>
-            <h2>{expedition.title}</h2>
-            {expedition.weather ? (
-              <p className="weather" title={expedition.weather.attribution}>
-                {expedition.weather.isDay === false ? "🌙" : "🌤️"} {expedition.weather.summary}
-              </p>
-            ) : null}
-            <p className="scene">{expedition.scene}</p>
-          </header>
-
-          <div className="greeting-card">
-            <div>
-              <p className="eyebrow">Say hello in {expedition.greeting.language}</p>
-              <p className="greeting-card__phrase">{expedition.greeting.phrase}</p>
-              <p className="muted small">
-                {expedition.greeting.pronunciation ? `“${expedition.greeting.pronunciation}” · ` : ""}
-                {expedition.greeting.meaning}
-              </p>
-            </div>
-            {canSpeak() ? (
-              <button type="button" className="icon-btn" aria-label="Hear it" onClick={() => speak(expedition.greeting.phrase)}>
-                🔊
-              </button>
-            ) : null}
-          </div>
-
-          {expedition.curiosity.length ? (
-            <section className="curiosity">
-              <p className="eyebrow">Curiosity board</p>
-              <ul>
-                {expedition.curiosity.map((q) => (
-                  <li key={q}>
-                    <span aria-hidden="true">?</span> {q}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
+          <BriefingHeader briefing={expedition} />
 
           <section aria-label="Locals">
             <p className="eyebrow">People you can meet</p>
@@ -399,21 +360,121 @@ export function ExpeditionScreen() {
   );
 }
 
+/** The title, scene, greeting and curiosity board: the part of an expedition that arrives first. */
+function BriefingHeader({ briefing }: { briefing: ExpeditionBriefing }) {
+  const where = [briefing.locality.city, briefing.locality.region, briefing.locality.country].filter(Boolean).join(", ");
+  return (
+    <>
+      <header className="expedition-head">
+        <p className="eyebrow">{where || briefing.destination.label}</p>
+        <h2>{briefing.title}</h2>
+        {briefing.weather ? (
+          <p className="weather" title={briefing.weather.attribution}>
+            {briefing.weather.isDay === false ? "🌙" : "🌤️"} {briefing.weather.summary}
+          </p>
+        ) : null}
+        <p className="scene">{briefing.scene}</p>
+      </header>
+
+      <div className="greeting-card">
+        <div>
+          <p className="eyebrow">Say hello in {briefing.greeting.language}</p>
+          <p className="greeting-card__phrase">{briefing.greeting.phrase}</p>
+          <p className="muted small">
+            {briefing.greeting.pronunciation ? `“${briefing.greeting.pronunciation}” · ` : ""}
+            {briefing.greeting.meaning}
+          </p>
+        </div>
+        {canSpeak() ? (
+          <button type="button" className="icon-btn" aria-label="Hear it" onClick={() => speak(briefing.greeting.phrase)}>
+            🔊
+          </button>
+        ) : null}
+      </div>
+
+      {briefing.curiosity.length ? (
+        <section className="curiosity">
+          <p className="eyebrow">Curiosity board</p>
+          <ul>
+            {briefing.curiosity.map((q) => (
+              <li key={q}>
+                <span aria-hidden="true">?</span> {q}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+/** What the model is doing right now, in the player's terms. */
+function progressNote(progress: StreamProgress | null): string {
+  if (!progress || progress.phase === "grounding") return "Gathering places, weather and sources…";
+  if (progress.phase === "thinking") return progress.thinking ? `The Game Master is thinking (${formatCount(progress.thinking)} characters of notes)…` : "The Game Master is planning your visit…";
+  return `The Game Master is writing (${formatCount(progress.written)} characters)…`;
+}
+
+/** Two-stage arrival: the briefing is here, the locals are still being written. */
+export function ArrivingScreen() {
+  const busy = useGame().ui.busy;
+  const map = useMap();
+  const elapsed = useElapsed(busy?.startedAt ?? null);
+  const destination = busy?.briefing?.destination;
+  useEffect(() => {
+    if (destination) map.run((m) => m.flyTo(destination, 14));
+  }, [map, destination]);
+  if (!busy?.briefing) return null;
+  return (
+    <div className="map-screen">
+      <aside className="side-panel" aria-label={`Arriving: ${busy.briefing.title}`} aria-busy="true">
+        <div className="side-panel__scroll">
+          <BriefingHeader briefing={busy.briefing} />
+          <section aria-label="Locals">
+            <p className="eyebrow">People you can meet</p>
+            <ul className="locals">
+              {[0, 1, 2].map((i) => (
+                <li key={i} className="local-card local-card--pending" aria-hidden={i > 0}>
+                  {i === 0 ? <Spinner label={`Meeting the locals… ${formatElapsed(elapsed)}`} /> : null}
+                </li>
+              ))}
+            </ul>
+            <p className="muted small" role="status">
+              {progressNote(busy.progress)}
+            </p>
+          </section>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+const PHASES: { id: StreamProgress["phase"]; label: string }[] = [
+  { id: "grounding", label: "Finding places, weather and sources" },
+  { id: "thinking", label: "Planning your visit" },
+  { id: "writing", label: "Writing the scene" },
+];
+
 export function ScoutingOverlay() {
   const busy = useGame().ui.busy;
-  if (!busy) return null;
+  const elapsed = useElapsed(busy?.startedAt ?? null);
+  if (!busy || busy.briefing) return null;
+  const now = PHASES.findIndex((p) => p.id === (busy.progress?.phase ?? "grounding"));
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label={`Travelling to ${busy.label}`}>
       <div className="overlay__card">
-        <p className="eyebrow">Expedition</p>
+        <p className="eyebrow">Expedition · {formatElapsed(elapsed)}</p>
         <h2>Travelling to {busy.label}</h2>
         <ol className="scout-steps">
-          {SCOUT_STEPS.map((step, i) => (
-            <li key={step} className={i < busy.step ? "is-done" : i === busy.step ? "is-now" : ""}>
-              {i < busy.step ? "✓" : i === busy.step ? <Spinner /> : "·"} {step}
+          {PHASES.map((phase, i) => (
+            <li key={phase.id} className={i < now ? "is-done" : i === now ? "is-now" : ""}>
+              {i < now ? "✓" : i === now ? <Spinner /> : "·"} {phase.label}
             </li>
           ))}
         </ol>
+        <p className="muted small" role="status">
+          {progressNote(busy.progress)}
+        </p>
       </div>
     </div>
   );

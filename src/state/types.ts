@@ -5,11 +5,13 @@ import type {
   Destination,
   EndReason,
   Expedition,
+  ExpeditionBriefing,
   Hint,
   Insight,
   NpcCard,
   Persona,
   Source,
+  StreamProgress,
   TranscriptEntry,
 } from "../../shared/schemas.ts";
 import type { SkillId } from "../../shared/skills.ts";
@@ -174,10 +176,12 @@ export interface UiState {
   config: AppConfig | null;
   configError: string | null;
   toasts: Toast[];
-  busy: { kind: "expedition"; label: string; step: number } | null;
+  /** An expedition on its way: real progress from the server, then the briefing before the locals. */
+  busy: { kind: "expedition"; label: string; startedAt: number; progress: StreamProgress | null; briefing: ExpeditionBriefing | null } | null;
   personaStatus: Record<string, "loading" | "ready" | "error">;
   hintLoading: boolean;
   debriefLoading: boolean;
+  debriefProgress: StreamProgress | null;
   needsAccessCode: boolean;
 }
 

@@ -106,13 +106,6 @@ export function setFocusSkill(focusSkill: PlayerProfile["focusSkill"]): void {
 }
 
 // ── Expeditions ──────────────────────────────────────────────────────────
-export const SCOUT_STEPS = [
-  "Flying in…",
-  "Checking the weather and local time…",
-  "Finding places where people gather…",
-  "Reading up on history, culture and livelihoods…",
-  "Meeting the locals…",
-];
 
 export function surpriseDestination(s: GameState): Destination {
   const visited = new Set(s.atlas.map((a) => a.destination.postcardId).filter(Boolean));
@@ -124,13 +117,23 @@ export function surpriseDestination(s: GameState): Destination {
 export async function startExpedition(destination: Destination): Promise<void> {
   const s = store.get();
   if (s.ui.busy || !s.player) return;
-  store.ui({ busy: { kind: "expedition", label: destination.label, step: 0 } });
-  const timer = setInterval(() => {
+  store.ui({ busy: { kind: "expedition", label: destination.label, startedAt: Date.now(), progress: null, briefing: null } });
+  const patchBusy = (patch: Partial<NonNullable<GameState["ui"]["busy"]>>) => {
     const busy = store.get().ui.busy;
-    if (busy) store.ui({ busy: { ...busy, step: Math.min(busy.step + 1, SCOUT_STEPS.length - 1) } });
-  }, 2200);
+    if (busy) store.ui({ busy: { ...busy, ...patch } });
+  };
   try {
-    const expedition = await api.expedition({ destination, player: playerContext(s) });
+    const expedition = await api.expedition(
+      { destination, player: playerContext(s) },
+      {
+        onProgress: (progress) => patchBusy({ progress }),
+        // Two-stage arrival: read the briefing while the Game Master is still writing the locals.
+        onBriefing: (briefing) => {
+          patchBusy({ briefing });
+          go("expedition");
+        },
+      },
+    );
     store.set((st) => ({
       ...st,
       expeditions: [expedition, ...st.expeditions.filter((e) => e.id !== expedition.id)],
@@ -151,10 +154,10 @@ export async function startExpedition(destination: Destination): Promise<void> {
     }));
     prefetchPersonas(expedition);
   } catch (error) {
+    const briefed = Boolean(store.get().ui.busy?.briefing);
     store.ui({ busy: null });
+    if (briefed) go("world");
     toast("error", "Couldn't start the expedition", message(error));
-  } finally {
-    clearInterval(timer);
   }
 }
 
@@ -387,16 +390,19 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
   const s = store.get();
   const encounter = s.active.encounter;
   if (!encounter || encounter.status !== "ended" || s.ui.debriefLoading) return;
-  store.ui({ debriefLoading: true });
+  store.ui({ debriefLoading: true, debriefProgress: null });
   try {
     const base = encounterBase(s, encounter);
-    const debrief = await api.debrief({
-      ...base,
-      startRapport: encounter.startRapport,
-      endReason: encounter.endReason ?? "left",
-      selfRating,
-      selfNote: selfNote.trim() || undefined,
-    });
+    const debrief = await api.debrief(
+      {
+        ...base,
+        startRapport: encounter.startRapport,
+        endReason: encounter.endReason ?? "left",
+        selfRating,
+        selfNote: selfNote.trim() || undefined,
+      },
+      { onProgress: (debriefProgress) => store.ui({ debriefProgress }) },
+    );
     store.set((st) => {
       const enc = st.active.encounter;
       if (!enc || enc.id !== encounter.id) return { ...st, ui: { ...st.ui, debriefLoading: false } };

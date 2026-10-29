@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { DebriefRequest } from "../../shared/schemas.ts";
 import type { DebriefDraft, ExpeditionDraft, NpcTurnDraft, PersonaDraft } from "../../server/ai/schemas.ts";
-import { finalizeDebrief, finalizeExpedition, finalizePersona, isVerbatim, normalizeQuiz, offsetPoint, resolveTurn } from "../../server/game/engine.ts";
+import { briefingFromPartial, finalizeDebrief, finalizeExpedition, finalizePersona, isVerbatim, normalizeQuiz, offsetPoint, progressReporter, resolveTurn } from "../../server/game/engine.ts";
+import { parsePartialObject } from "../../server/ai/partialJson.ts";
 import { buildNpcMessages } from "../../server/ai/prompts.ts";
 import { context, npc, pack, persona, player, turnRequest } from "./fixtures.ts";
 
@@ -205,5 +206,45 @@ describe("buildNpcMessages", () => {
   it("uses the persona's details in the opening scene", () => {
     expect(buildNpcMessages(turnRequest(), 1)[0]!.content).toContain(`${player.name} approaches you at ${persona.placeName}`);
     expect(context.title).toBeTruthy();
+  });
+});
+
+describe("streaming briefings", () => {
+  it("parses only the complete top-level fields of a streaming object", () => {
+    const full = JSON.stringify({ title: "Market day", scene: "Rain on tin roofs", locality: { city: "Nairobi" }, greeting: { language: "Swahili", phrase: "Habari" }, curiosity: ["Why?", "How?"], count: 12, npcs: [{ name: "A" }] });
+    const at = (marker: string) => full.slice(0, full.indexOf(marker));
+    expect(parsePartialObject(at('"scene"'))).toEqual({ title: "Market day" });
+    expect(parsePartialObject(full.slice(0, full.indexOf("Rain") + 4))).toEqual({ title: "Market day" });
+    expect(Object.keys(parsePartialObject(at('"count"')))).toEqual(["title", "scene", "locality", "greeting", "curiosity"]);
+    // "12" might still become "123": a number counts once something follows it.
+    expect(parsePartialObject(full.slice(0, full.indexOf("12") + 2))).not.toHaveProperty("count");
+    expect(parsePartialObject(full)).toMatchObject({ count: 12, npcs: [{ name: "A" }] });
+    expect(parsePartialObject('```json\n{"title": "Fenced \\"quote\\" {x}", "scene"')).toEqual({ title: 'Fenced "quote" {x}' });
+    expect(parsePartialObject("not json")).toEqual({});
+  });
+
+  it("builds the briefing once title, scene, greeting and curiosity board are written", () => {
+    const request = { destination: { lat: -1.28, lng: 36.82, label: "Nairobi", source: "postcard" as const }, player };
+    const grounding = { ...pack, locality: { city: "Nairobi", country: "Kenya" } };
+    const partial = '{"title": "Matatu mornings", "scene": "Horns and hawkers.", "locality": {"city": "", "region": "", "country": ""}, "greeting": {"language": "Swahili", "phrase": "Habari", "meaning": "Hello", "pronunciation": ""}, "curiosity": ["Who paints the matatus?"], "notes": "Long notes still';
+    expect(briefingFromPartial(partial.slice(0, partial.indexOf('"curiosity"')), grounding, request)).toBeNull();
+    expect(briefingFromPartial(partial, grounding, request)).toMatchObject({
+      title: "Matatu mornings",
+      locality: { city: "Nairobi", country: "Kenya" },
+      greeting: { language: "Swahili", phrase: "Habari", pronunciation: undefined },
+      curiosity: ["Who paints the matatus?"],
+    });
+  });
+
+  it("reports progress at most every interval, labelled by what the model is doing", () => {
+    const events: unknown[] = [];
+    const reporter = progressReporter((e) => events.push(e), Date.now(), 1_000);
+    const onProgress = reporter.onProgress();
+    onProgress({ thinking: 40, output: "" });
+    onProgress({ thinking: 80, output: '{"t' });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "progress", progress: { phase: "thinking", thinking: 40, written: 0 } });
+    reporter.report("writing", { thinking: 80, output: '{"t' }, true);
+    expect(events[1]).toMatchObject({ progress: { phase: "writing", written: 3 } });
   });
 });

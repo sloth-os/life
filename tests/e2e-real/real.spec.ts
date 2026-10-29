@@ -30,9 +30,11 @@ test("a real expedition: Google Maps, live grounding and a real model", async ({
   // The model composes an expedition from live grounding.
   await page.locator(".postcard-row", { hasText: "Kyoto" }).click();
   await page.getByRole("button", { name: "Travel here" }).click();
-  await expect(page.getByText(/^Say hello in/), "the model composes an expedition").toBeVisible({ timeout: COMPOSE_TIMEOUT });
+  // Two-stage arrival: the briefing first, then the locals.
+  await expect(page.getByText(/^Say hello in/), "the model writes the briefing").toBeVisible({ timeout: COMPOSE_TIMEOUT });
   await expect(page.locator(".scene")).not.toBeEmpty();
-  expect(await page.locator(".local-card").count(), "the expedition has locals to meet").toBeGreaterThan(0);
+  await snap("briefing");
+  await expect(page.locator(".local-card:not(.local-card--pending)").first(), "the model composes the locals").toBeVisible({ timeout: COMPOSE_TIMEOUT });
   await snap("expedition");
 
   // …then a local's persona, met where Google has Street View (or a place card where it doesn't).

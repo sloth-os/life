@@ -102,26 +102,32 @@ jobs:
             ${{ runner.temp }}/logcat.txt
           retention-days: 7
 
-  # The real-services suite: Google Maps in the browser and a real model, so real costs.
-  # Pushes to main and manual runs only; pull requests never get it (and forks get no secrets).
+  # The real-services suite: Google Maps in the browser, the omni model (text and voice) and
+  # postcard images through mm-gateway, so real costs. Pushes to main and manual runs only;
+  # pull requests never get it (and forks get no secrets).
   real-check:
     name: Real services configured?
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request'
     outputs:
       configured: ${{ steps.check.outputs.configured }}
+      images: ${{ steps.check.outputs.images }}
     steps:
       - id: check
         env:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           GOOGLE_MAPS_MAP_ID: ${{ vars.GOOGLE_MAPS_MAP_ID }}
-          VISION_MODEL_TYPE: ${{ vars.VISION_MODEL_TYPE }}
-          VISION_MODEL_BASE_URL: ${{ vars.VISION_MODEL_BASE_URL }}
-          VISION_MODEL: ${{ vars.VISION_MODEL }}
-          VISION_MODEL_API_KEY: ${{ secrets.VISION_MODEL_API_KEY }}
+          OMNI_API_FORMAT: ${{ vars.OMNI_API_FORMAT }}
+          OMNI_BASE_URL: ${{ vars.OMNI_BASE_URL }}
+          OMNI_MODEL: ${{ vars.OMNI_MODEL }}
+          OMNI_API_KEY: ${{ secrets.OMNI_API_KEY }}
+          IMAGE_MODEL_TYPE: ${{ vars.IMAGE_MODEL_TYPE }}
+          IMAGE_MODEL_BASE_URL: ${{ vars.IMAGE_MODEL_BASE_URL }}
+          IMAGE_MODEL: ${{ vars.IMAGE_MODEL }}
+          IMAGE_MODEL_API_KEY: ${{ secrets.IMAGE_MODEL_API_KEY }}
         run: |
           missing=()
-          for v in GOOGLE_MAPS_API_KEY GOOGLE_MAPS_MAP_ID VISION_MODEL_TYPE VISION_MODEL_BASE_URL VISION_MODEL VISION_MODEL_API_KEY; do
+          for v in GOOGLE_MAPS_API_KEY GOOGLE_MAPS_MAP_ID OMNI_API_FORMAT OMNI_BASE_URL OMNI_MODEL OMNI_API_KEY; do
             [ -n "${!v}" ] || missing+=("$v")
           done
           if [ ${#missing[@]} -gt 0 ]; then
@@ -130,6 +136,12 @@ jobs:
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
+          # Postcard images are optional: without them the suite skips its postcard step.
+          images=true
+          for v in IMAGE_MODEL_TYPE IMAGE_MODEL_BASE_URL IMAGE_MODEL IMAGE_MODEL_API_KEY; do
+            [ -n "${!v}" ] || images=false
+          done
+          echo "images=$images" >> "$GITHUB_OUTPUT"
 
   e2e-real:
     name: End-to-end on real services
@@ -138,12 +150,15 @@ jobs:
     if: needs.real-check.outputs.configured == 'true'
     timeout-minutes: 45
     env:
-      # The org's model settings map onto the app's provider-neutral AI_* variables.
-      AI_PROVIDER: ${{ vars.VISION_MODEL_TYPE }}
-      AI_MODEL: ${{ vars.VISION_MODEL }}
-      AI_BASE_URL: ${{ vars.VISION_MODEL_BASE_URL }}
+      # The org's omni model plays every agent and speaks and listens; its settings map onto the
+      # app's provider-neutral AI_* variables (and VOICE_MODEL, which shares AI_* otherwise).
+      AI_PROVIDER: ${{ vars.OMNI_API_FORMAT }}
+      AI_MODEL: ${{ vars.OMNI_MODEL }}
+      AI_BASE_URL: ${{ vars.OMNI_BASE_URL }}
+      VOICE_MODEL: ${{ vars.OMNI_MODEL }}
       GOOGLE_MAPS_MAP_ID: ${{ vars.GOOGLE_MAPS_MAP_ID }}
-      APP_USER_AGENT: CommonGround-CI/0.1 (+https://github.com/${{ github.repository }})
+      IMAGE_MODEL: ${{ vars.IMAGE_MODEL }}
+      APP_USER_AGENT: CommonGround-CI/0.2 (+https://github.com/${{ github.repository }})
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -153,19 +168,33 @@ jobs:
       - run: npm ci
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
-      # Fails fast, with the server's answer, if the model is unreachable or misconfigured.
-      - name: Probe the model
-        timeout-minutes: 8
+      # mm-gateway holds the image provider's key; the app gets only the gateway's URL and a run key.
+      - name: Start mm-gateway
+        if: needs.real-check.outputs.images == 'true'
         env:
-          AI_API_KEY: ${{ secrets.VISION_MODEL_API_KEY }}
+          IMAGE_MODEL_TYPE: ${{ vars.IMAGE_MODEL_TYPE }}
+          IMAGE_MODEL_BASE_URL: ${{ vars.IMAGE_MODEL_BASE_URL }}
+          IMAGE_MODEL_API_KEY: ${{ secrets.IMAGE_MODEL_API_KEY }}
+        run: node scripts/mm-gateway.ts start
+      # Fails fast, with each server's answer, if a model or the gateway is unreachable or misconfigured.
+      - name: Probe the services
+        timeout-minutes: 10
+        env:
+          AI_API_KEY: ${{ secrets.OMNI_API_KEY }}
         run: node scripts/probe-ai.ts
       # The keys reach these steps only.
       - name: Real-services suite
         env:
-          AI_API_KEY: ${{ secrets.VISION_MODEL_API_KEY }}
+          AI_API_KEY: ${{ secrets.OMNI_API_KEY }}
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: npm run test:e2e:real
-      # Screenshots and the HTML report only: no traces, which would record the browser Maps key.
+      - name: Stop mm-gateway
+        if: always() && needs.real-check.outputs.images == 'true'
+        env:
+          IMAGE_MODEL_API_KEY: ${{ secrets.IMAGE_MODEL_API_KEY }}
+        run: node scripts/mm-gateway.ts stop
+      # Screenshots, the probe's samples, the gateway log (keys removed) and the HTML report.
+      # No traces: they would record the browser Maps key.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -173,6 +202,7 @@ jobs:
           path: |
             playwright-report-real/
             test-results/real/
+            test-results/probe/
           if-no-files-found: ignore
           retention-days: 7
 

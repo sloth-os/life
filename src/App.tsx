@@ -9,7 +9,7 @@ import { DebriefScreen } from "./screens/Debrief.tsx";
 import { EncounterScreen } from "./screens/Encounter.tsx";
 import { AccessGate, OnboardingScreen, TitleScreen } from "./screens/Intro.tsx";
 import { JournalScreen } from "./screens/Journal.tsx";
-import { ExpeditionScreen, ScoutingOverlay, WorldScreen } from "./screens/World.tsx";
+import { ArrivingScreen, ExpeditionScreen, ScoutingOverlay, WorldScreen } from "./screens/World.tsx";
 import { currentExpedition, go, loadConfig } from "./state/actions.ts";
 import { useGame } from "./state/store.ts";
 import type { Screen } from "./state/types.ts";
@@ -181,7 +181,7 @@ export function App() {
           {inGame ? <MapStage config={config} visible={mapVisible} dark={dark} /> : null}
           {screen === "onboarding" ? <OnboardingScreen /> : !inGame ? <TitleScreen /> : null}
           {inGame && screen === "world" ? <WorldScreen /> : null}
-          {inGame && screen === "expedition" ? <ExpeditionScreen /> : null}
+          {inGame && screen === "expedition" ? game.ui.busy?.briefing ? <ArrivingScreen /> : <ExpeditionScreen /> : null}
           {inGame && screen === "encounter" ? <EncounterScreen /> : null}
           {inGame && screen === "debrief" ? <DebriefScreen /> : null}
           {inGame && screen === "journal" ? <JournalScreen /> : null}

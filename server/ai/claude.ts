@@ -33,7 +33,7 @@ import {
   type NpcTurnDraft,
   type PersonaDraft,
 } from "./schemas.ts";
-import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, NpcTurnInput } from "./types.ts";
+import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, NpcTurnInput, OnProgress } from "./types.ts";
 
 /** Structured outputs on the beta endpoint, plus server-side refusal fallback ("default" routing). */
 const BETAS: Anthropic.Beta.AnthropicBeta[] = ["structured-outputs-2025-12-15", "server-side-fallback-2026-07-01"];
@@ -41,9 +41,11 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = ["structured-outputs-2025-12-15", 
 const MAX_TOKENS: Record<AiTask, number> = {
   expedition: 16_000,
   persona: 16_000,
+  scene: 16_000,
   turn: 8_000,
   hint: 4_000,
   debrief: 16_000,
+  ask: 4_000,
 };
 
 type SystemBlock = Anthropic.Beta.BetaTextBlockParam;
@@ -56,6 +58,8 @@ function cached(text: string): SystemBlock {
 export interface ClaudeGameAIOptions {
   client: Anthropic;
   model: string;
+  /** Per-task models; the default model for the rest. */
+  models?: Partial<Record<AiTask, string>>;
   effort: Record<AiTask, Effort>;
   log?: (message: string) => void;
 }
@@ -90,13 +94,14 @@ export class ClaudeGameAI implements GameAI {
     messages: Message[],
     signal?: AbortSignal,
     stream?: { field: string; onValue: (value: string) => void },
+    onProgress?: OnProgress,
   ): Promise<z.infer<S>> {
     const format = zodOutputFormat(schema);
     const started = Date.now();
     try {
       const response = this.#opts.client.beta.messages.stream(
         {
-          model: this.#opts.model,
+          model: this.#opts.models?.[task] ?? this.#opts.model,
           max_tokens: MAX_TOKENS[task],
           betas: BETAS,
           fallbacks: "default",
@@ -120,6 +125,18 @@ export class ClaudeGameAI implements GameAI {
           }
         });
       }
+      if (onProgress) {
+        let thinking = 0;
+        let output = "";
+        response.on("thinking", (delta) => {
+          thinking += delta.length;
+          onProgress({ thinking, output });
+        });
+        response.on("text", (_delta, snapshot) => {
+          output = snapshot;
+          onProgress({ thinking, output });
+        });
+      }
 
       const message = await response.finalMessage();
       const usage = message.usage;
@@ -141,12 +158,12 @@ export class ClaudeGameAI implements GameAI {
     }
   }
 
-  composeExpedition(input: ComposeExpeditionInput, signal?: AbortSignal): Promise<ExpeditionDraft> {
-    return this.#run("expedition", ExpeditionDraftSchema, [cached(GM_EXPEDITION_SYSTEM)], [{ role: "user", content: renderExpeditionInput(input) }], signal);
+  composeExpedition(input: ComposeExpeditionInput, signal?: AbortSignal, onProgress?: OnProgress): Promise<ExpeditionDraft> {
+    return this.#run("expedition", ExpeditionDraftSchema, [cached(GM_EXPEDITION_SYSTEM)], [{ role: "user", content: renderExpeditionInput(input) }], signal, undefined, onProgress);
   }
 
-  createPersona(input: CreatePersonaInput, signal?: AbortSignal): Promise<PersonaDraft> {
-    return this.#run("persona", PersonaDraftSchema, [cached(GM_PERSONA_SYSTEM)], [{ role: "user", content: renderPersonaInput(input) }], signal);
+  createPersona(input: CreatePersonaInput, signal?: AbortSignal, onProgress?: OnProgress): Promise<PersonaDraft> {
+    return this.#run("persona", PersonaDraftSchema, [cached(GM_PERSONA_SYSTEM)], [{ role: "user", content: renderPersonaInput(input) }], signal, undefined, onProgress);
   }
 
   npcTurn(input: NpcTurnInput, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<NpcTurnDraft> {
@@ -159,7 +176,7 @@ export class ClaudeGameAI implements GameAI {
     return this.#run("hint", HintDraftSchema, [cached(MENTOR_HINT_SYSTEM)], [{ role: "user", content: renderHintInput(request) }], signal);
   }
 
-  debrief(request: DebriefRequest, signal?: AbortSignal): Promise<DebriefDraft> {
-    return this.#run("debrief", DebriefDraftSchema, [cached(MENTOR_DEBRIEF_SYSTEM)], [{ role: "user", content: renderDebriefInput(request) }], signal);
+  debrief(request: DebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft> {
+    return this.#run("debrief", DebriefDraftSchema, [cached(MENTOR_DEBRIEF_SYSTEM)], [{ role: "user", content: renderDebriefInput(request) }], signal, undefined, onProgress);
   }
 }

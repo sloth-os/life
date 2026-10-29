@@ -85,6 +85,7 @@ const initialUi: UiState = {
   personaStatus: {},
   hintLoading: false,
   debriefLoading: false,
+  debriefProgress: null,
   needsAccessCode: false,
 };
 

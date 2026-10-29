@@ -22,6 +22,15 @@ export interface NpcTurnInput {
   wrapUp: boolean;
 }
 
+/** What a streaming call has produced so far, for progress reports and early results. */
+export interface AiProgress {
+  /** Characters of reasoning so far (0 when the model doesn't expose it). */
+  thinking: number;
+  /** The answer so far: partial JSON. */
+  output: string;
+}
+export type OnProgress = (progress: AiProgress) => void;
+
 /**
  * The three agents behind the game — Game Master (expedition, persona),
  * Partner (NPC turns) and Mentor (hint, debrief). Implemented by Claude, by any
@@ -29,10 +38,10 @@ export interface NpcTurnInput {
  */
 export interface GameAI {
   readonly mode: "claude" | "openai" | "demo";
-  composeExpedition(input: ComposeExpeditionInput, signal?: AbortSignal): Promise<ExpeditionDraft>;
-  createPersona(input: CreatePersonaInput, signal?: AbortSignal): Promise<PersonaDraft>;
+  composeExpedition(input: ComposeExpeditionInput, signal?: AbortSignal, onProgress?: OnProgress): Promise<ExpeditionDraft>;
+  createPersona(input: CreatePersonaInput, signal?: AbortSignal, onProgress?: OnProgress): Promise<PersonaDraft>;
   /** `onReply` receives the reply text decoded so far (a snapshot, not a delta). */
   npcTurn(input: NpcTurnInput, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<NpcTurnDraft>;
   coachHint(request: HintRequest, signal?: AbortSignal): Promise<HintDraft>;
-  debrief(request: DebriefRequest, signal?: AbortSignal): Promise<DebriefDraft>;
+  debrief(request: DebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft>;
 }

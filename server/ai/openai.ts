@@ -9,7 +9,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import type { DebriefRequest, HintRequest } from "../../shared/schemas.ts";
-import type { JsonMode } from "../config.ts";
+import { detectThinkingStyle, type AiTask, type Effort, type JsonMode, type Thinking, type ThinkingStyle } from "../config.ts";
 import { AiOutputError, AiRefusalError, HttpError } from "../util/errors.ts";
 import { extractPartialString } from "./partialJson.ts";
 import {
@@ -37,7 +37,7 @@ import {
   type NpcTurnDraft,
   type PersonaDraft,
 } from "./schemas.ts";
-import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, NpcTurnInput } from "./types.ts";
+import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, NpcTurnInput, OnProgress } from "./types.ts";
 
 const NEXT_MODE: Record<JsonMode, JsonMode | null> = { json_schema: "json_object", json_object: "text", text: null };
 
@@ -159,17 +159,45 @@ export function toHttpError(error: unknown): unknown {
   return error;
 }
 
+/** The request fields that switch reasoning on or off, by the switch the server reads. */
+export function thinkingFields(style: ThinkingStyle, thinking: Thinking, effort: Effort): Record<string, unknown> {
+  if (thinking === "model" || style === "none") return {};
+  const off = thinking === "off" || effort === "low" || effort === "medium";
+  if (style === "qwen") return { enable_thinking: !off };
+  return { reasoning_effort: off ? "low" : effort === "high" ? "medium" : "high" };
+}
+
+/** Fields the game sends only to save time; a server that rejects one is asked again without it. */
+const OPTIONAL_FIELDS = ["enable_thinking", "reasoning_effort"] as const;
+
 export interface OpenAIGameAIOptions {
   client: OpenAI;
   model: string;
+  /** Per-task models; the default model for the rest. */
+  models?: Partial<Record<AiTask, string>>;
   jsonMode?: JsonMode;
+  thinking?: Thinking;
+  thinkingStyle?: ThinkingStyle | "auto";
+  effort?: Partial<Record<AiTask, Effort>>;
   log?: (message: string) => void;
+}
+
+interface RunOptions<S extends z.ZodType> {
+  task: AiTask;
+  schema: S;
+  system: string;
+  messages: Message[];
+  signal?: AbortSignal;
+  /** Surface one string field as it is written (the NPC's reply). */
+  stream?: { field: string; onValue: (value: string) => void };
+  onProgress?: OnProgress;
 }
 
 export class OpenAIGameAI implements GameAI {
   readonly mode = "openai" as const;
   readonly #opts: OpenAIGameAIOptions;
   #jsonMode: JsonMode;
+  readonly #dropped = new Set<string>();
 
   constructor(opts: OpenAIGameAIOptions) {
     this.#opts = opts;
@@ -180,59 +208,92 @@ export class OpenAIGameAI implements GameAI {
     return this.#jsonMode;
   }
 
-  async #run<S extends z.ZodType>(
-    task: string,
-    schema: S,
-    system: string,
-    messages: Message[],
-    signal?: AbortSignal,
-    stream?: { field: string; onValue: (value: string) => void },
-  ): Promise<z.infer<S>> {
+  /** Optional fields the server has rejected, which are no longer sent. */
+  get droppedFields(): string[] {
+    return [...this.#dropped];
+  }
+
+  async #run<S extends z.ZodType>(run: RunOptions<S>): Promise<z.infer<S>> {
     for (;;) {
       const mode = this.#jsonMode;
+      let body: Record<string, unknown> = {};
       try {
-        let text = await this.#complete(task, schema, system, messages, mode, signal, stream);
+        body = this.#body(run, run.messages, mode);
+        let text = await this.#complete(run, body);
         let data: unknown;
         try {
           data = extractJson(text);
         } catch {
           // One repair round: some models wrap or truncate JSON when not constrained.
-          text = await this.#complete(task, schema, system, [...messages, { role: "assistant", content: text }, { role: "user", content: "That wasn't valid JSON. Reply again with only the JSON object." }], mode, signal);
+          const retry = [...run.messages, { role: "assistant" as const, content: text }, { role: "user" as const, content: "That wasn't valid JSON. Reply again with only the JSON object." }];
+          text = await this.#complete({ ...run, stream: undefined }, this.#body(run, retry, mode));
           data = extractJson(text);
         }
-        const result = schema.safeParse(coerceToSchema(schema, data));
+        const result = run.schema.safeParse(coerceToSchema(run.schema, data));
         if (!result.success) throw new AiOutputError(result.error.issues[0]?.message ?? "invalid reply");
         return result.data;
       } catch (error) {
-        const next = NEXT_MODE[mode];
-        if (next && (error instanceof OpenAI.BadRequestError || error instanceof OpenAI.UnprocessableEntityError)) {
-          // Concurrent calls can fail on the same mode; step down once, then retry at the current mode.
-          if (this.#jsonMode === mode) {
-            this.#opts.log?.(`[openai] ${task}: the server rejected ${mode} output (${error.status}: ${error.message.slice(0, 200)}); falling back to ${next}`);
-            this.#jsonMode = next;
+        if (error instanceof OpenAI.BadRequestError || error instanceof OpenAI.UnprocessableEntityError) {
+          // A rejected speed-up field goes first: the answer format may be fine.
+          const field = OPTIONAL_FIELDS.find((f) => f in body && error.message.includes(f));
+          if (field) {
+            this.#dropped.add(field);
+            this.#opts.log?.(`[openai] ${run.task}: the server rejected ${field} (${error.status}); not sending it again`);
+            continue;
           }
-          continue;
+          const next = NEXT_MODE[mode];
+          if (next) {
+            // Concurrent calls can fail on the same mode; step down once, then retry at the current mode.
+            if (this.#jsonMode === mode) {
+              this.#opts.log?.(`[openai] ${run.task}: the server rejected ${mode} output (${error.status}: ${error.message.slice(0, 200)}); falling back to ${next}`);
+              this.#jsonMode = next;
+            }
+            continue;
+          }
+          // Plain text was rejected too: a speed-up field the error didn't name is the last suspect.
+          const unnamed = OPTIONAL_FIELDS.filter((f) => f in body);
+          if (unnamed.length) {
+            unnamed.forEach((f) => this.#dropped.add(f));
+            this.#opts.log?.(`[openai] ${run.task}: rejected even as plain text; no longer sending ${unnamed.join(", ")}`);
+            continue;
+          }
         }
-        this.#opts.log?.(`[openai] ${task} failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`);
+        this.#opts.log?.(`[openai] ${run.task} failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`);
         throw toHttpError(error);
       }
     }
   }
 
-  async #complete(task: string, schema: z.ZodType, system: string, messages: Message[], mode: JsonMode, signal?: AbortSignal, stream?: { field: string; onValue: (value: string) => void }): Promise<string> {
-    const started = Date.now();
-    const body = {
-      model: this.#opts.model,
-      messages: [{ role: "system" as const, content: `${system}\n\n${schemaInstruction(schema)}` }, ...messages],
+  #model(task: AiTask): string {
+    return this.#opts.models?.[task] ?? this.#opts.model;
+  }
+
+  #body<S extends z.ZodType>(run: RunOptions<S>, messages: Message[], mode: JsonMode): Record<string, unknown> {
+    const model = this.#model(run.task);
+    const style = !this.#opts.thinkingStyle || this.#opts.thinkingStyle === "auto" ? detectThinkingStyle(model) : this.#opts.thinkingStyle;
+    const thinking = thinkingFields(style, this.#opts.thinking ?? "auto", this.#opts.effort?.[run.task] ?? "medium");
+    for (const field of this.#dropped) delete thinking[field];
+    return {
+      model,
+      messages: [{ role: "system" as const, content: `${run.system}\n\n${schemaInstruction(run.schema)}` }, ...messages],
       ...(mode === "json_schema"
-        ? { response_format: { type: "json_schema" as const, json_schema: { name: task, schema: strictJsonSchema(schema), strict: true } } }
+        ? { response_format: { type: "json_schema" as const, json_schema: { name: run.task, schema: strictJsonSchema(run.schema), strict: true } } }
         : mode === "json_object"
           ? { response_format: { type: "json_object" as const } }
           : {}),
+      ...thinking,
     };
+  }
+
+  async #complete<S extends z.ZodType>(run: RunOptions<S>, body: Record<string, unknown>): Promise<string> {
+    const started = Date.now();
+    const { signal, stream, onProgress } = run;
     // Always stream: some servers only stream thinking models, and a long generation keeps
     // the connection alive instead of idling into a timeout.
-    const chunks = await this.#opts.client.chat.completions.create({ ...body, stream: true }, { signal, timeout: 180_000 });
+    const chunks = await this.#opts.client.chat.completions.create(
+      { ...(body as unknown as OpenAI.ChatCompletionCreateParamsStreaming), stream: true },
+      { signal, timeout: 180_000 },
+    );
     let text = "";
     let reasoning = 0;
     let firstToken = 0;
@@ -242,48 +303,62 @@ export class OpenAIGameAI implements GameAI {
       const choice = chunk.choices[0];
       const delta = choice?.delta as { content?: string | null; refusal?: string | null; reasoning_content?: string | null } | undefined;
       if (delta?.refusal) throw new AiRefusalError(null);
-      // Some servers (Qwen, DeepSeek) stream reasoning separately; it only counts for the log.
+      // Some servers (Qwen, DeepSeek) stream reasoning separately; it counts for progress only.
       reasoning += delta?.reasoning_content?.length ?? 0;
       if (delta?.content) {
         firstToken ||= Date.now() - started;
         text += delta.content;
       }
       finish = choice?.finish_reason ?? finish;
-      if (stream) {
-        const value = extractPartialString(stripThinking(text), stream.field);
-        if (value !== null && value !== last) {
-          last = value;
-          stream.onValue(value);
+      if (stream || onProgress) {
+        const visible = stripThinking(text);
+        onProgress?.({ thinking: reasoning + (text.length - visible.length), output: visible });
+        if (stream) {
+          const value = extractPartialString(visible, stream.field);
+          if (value !== null && value !== last) {
+            last = value;
+            stream.onValue(value);
+          }
         }
       }
     }
     // The SDK ends an aborted stream quietly; don't mistake the partial reply for a finished one.
     if (signal?.aborted) throw new OpenAI.APIUserAbortError();
-    this.#opts.log?.(`[openai] ${task} ${this.#opts.model} ${mode} first-token=${firstToken}ms total=${Date.now() - started}ms chars=${text.length} reasoning=${reasoning} finish=${finish ?? "?"}`);
+    const thinking = "enable_thinking" in body ? ` enable_thinking=${String(body.enable_thinking)}` : "reasoning_effort" in body ? ` reasoning_effort=${String(body.reasoning_effort)}` : "";
+    this.#opts.log?.(
+      `[openai] ${run.task} ${String(body.model)} ${String((body.response_format as { type?: string } | undefined)?.type ?? "text")}${thinking} first-token=${firstToken}ms total=${Date.now() - started}ms chars=${text.length} reasoning=${reasoning} finish=${finish ?? "?"}`,
+    );
     if (finish === "length") throw new AiOutputError("the response was cut off");
     if (finish === "content_filter") throw new AiRefusalError("content_filter");
     return text;
   }
 
-  composeExpedition(input: ComposeExpeditionInput, signal?: AbortSignal): Promise<ExpeditionDraft> {
-    return this.#run("expedition", ExpeditionDraftSchema, GM_EXPEDITION_SYSTEM, [{ role: "user", content: renderExpeditionInput(input) }], signal);
+  composeExpedition(input: ComposeExpeditionInput, signal?: AbortSignal, onProgress?: OnProgress): Promise<ExpeditionDraft> {
+    return this.#run({ task: "expedition", schema: ExpeditionDraftSchema, system: GM_EXPEDITION_SYSTEM, messages: [{ role: "user", content: renderExpeditionInput(input) }], signal, onProgress });
   }
 
-  createPersona(input: CreatePersonaInput, signal?: AbortSignal): Promise<PersonaDraft> {
-    return this.#run("persona", PersonaDraftSchema, GM_PERSONA_SYSTEM, [{ role: "user", content: renderPersonaInput(input) }], signal);
+  createPersona(input: CreatePersonaInput, signal?: AbortSignal, onProgress?: OnProgress): Promise<PersonaDraft> {
+    return this.#run({ task: "persona", schema: PersonaDraftSchema, system: GM_PERSONA_SYSTEM, messages: [{ role: "user", content: renderPersonaInput(input) }], signal, onProgress });
   }
 
   npcTurn(input: NpcTurnInput, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<NpcTurnDraft> {
     const { context, npc, persona, memory } = input.request;
     const system = `${NPC_CONSTITUTION}\n\n${renderPersonaBlock(context, npc, persona, memory)}`;
-    return this.#run("turn", NpcTurnDraftSchema, system, buildNpcMessages(input.request, input.turnNumber), signal, onReply ? { field: "reply", onValue: onReply } : undefined);
+    return this.#run({
+      task: "turn",
+      schema: NpcTurnDraftSchema,
+      system,
+      messages: buildNpcMessages(input.request, input.turnNumber),
+      signal,
+      stream: onReply ? { field: "reply", onValue: onReply } : undefined,
+    });
   }
 
   coachHint(request: HintRequest, signal?: AbortSignal): Promise<HintDraft> {
-    return this.#run("hint", HintDraftSchema, MENTOR_HINT_SYSTEM, [{ role: "user", content: renderHintInput(request) }], signal);
+    return this.#run({ task: "hint", schema: HintDraftSchema, system: MENTOR_HINT_SYSTEM, messages: [{ role: "user", content: renderHintInput(request) }], signal });
   }
 
-  debrief(request: DebriefRequest, signal?: AbortSignal): Promise<DebriefDraft> {
-    return this.#run("debrief", DebriefDraftSchema, MENTOR_DEBRIEF_SYSTEM, [{ role: "user", content: renderDebriefInput(request) }], signal);
+  debrief(request: DebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft> {
+    return this.#run({ task: "debrief", schema: DebriefDraftSchema, system: MENTOR_DEBRIEF_SYSTEM, messages: [{ role: "user", content: renderDebriefInput(request) }], signal, onProgress });
   }
 }
