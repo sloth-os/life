@@ -8,6 +8,7 @@ import { PronounceButton } from "../components/Pronounce.tsx";
 import { Avatar, Difficulty, LensTag, SourceList, Spinner, formatCount, formatElapsed, useElapsed } from "../components/ui.tsx";
 import { api } from "../lib/api.ts";
 import { canSpeak, speak } from "../lib/speech.ts";
+import { startFlyIn, type FlyIn } from "../map/flyin.ts";
 import { useMap } from "../map/index.ts";
 import type { MapMarker } from "../map/types.ts";
 import { currentExpedition, ensurePersona, go, meet, personKey, startExpedition, surpriseDestination, toast } from "../state/actions.ts";
@@ -458,12 +459,32 @@ const PHASES: { id: StreamProgress["phase"]; label: string }[] = [
 ];
 
 export function ScoutingOverlay() {
-  const busy = useGame().ui.busy;
+  const { ui, settings } = useGame();
+  const busy = ui.busy;
   const elapsed = useElapsed(busy?.startedAt ?? null);
+  // While the Game Master works, fly in over Google's photorealistic 3D map (Google mode only).
+  const flyRef = useRef<HTMLDivElement>(null);
+  const flying =
+    Boolean(busy && !busy.briefing && ui.config?.features.flyIns) && settings.flyIns !== false && !settings.reducedMotion && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const target = busy?.destination;
+  useEffect(() => {
+    if (!flying || !target || !flyRef.current) return;
+    let live = true;
+    let flyIn: FlyIn | null = null;
+    void startFlyIn(flyRef.current, target).then((started) => {
+      if (live) flyIn = started;
+      else started?.destroy();
+    });
+    return () => {
+      live = false;
+      flyIn?.destroy();
+    };
+  }, [flying, target]);
   if (!busy || busy.briefing) return null;
   const now = PHASES.findIndex((p) => p.id === (busy.progress?.phase ?? "grounding"));
   return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-label={`Travelling to ${busy.label}`}>
+    <div className={`overlay${flying ? " overlay--flyin" : ""}`} role="dialog" aria-modal="true" aria-label={`Travelling to ${busy.label}`}>
+      {flying ? <div className="flyin" ref={flyRef} data-testid="flyin" /> : null}
       <div className="overlay__card">
         <p className="eyebrow">Expedition · {formatElapsed(elapsed)}</p>
         <h2>Travelling to {busy.label}</h2>

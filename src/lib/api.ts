@@ -1,5 +1,6 @@
 import type {
   ApiErrorBody,
+  AskRequest,
   AppConfig,
   Debrief,
   DebriefRequest,
@@ -11,6 +12,7 @@ import type {
   Hint,
   HintRequest,
   ListenRequest,
+  MentorAnswer,
   PostcardRequest,
   PronounceRequest,
   PronunciationResult,
@@ -164,6 +166,7 @@ export const api = {
   turn,
   hint: (body: HintRequest) => call<Hint>("/api/coach/hint", body),
   debrief: (body: DebriefRequest, handlers?: StreamHandlers) => stream<Debrief>("/api/coach/debrief", body, handlers),
+  ask: (body: AskRequest, onAnswer: (text: string) => void) => stream<MentorAnswer>("/api/coach/ask", body, { onText: onAnswer }, "Your mentor's answer was cut off. Try asking again."),
   speak: (body: SpeakRequest, signal?: AbortSignal) => binary("/api/voice/speak", body, signal),
   listen: (body: ListenRequest) => call<Heard>("/api/voice/listen", body),
   pronounce: (body: PronounceRequest) => call<PronunciationResult>("/api/voice/pronounce", body),

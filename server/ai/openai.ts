@@ -8,17 +8,19 @@
 // and gates as usual.
 import OpenAI from "openai";
 import { z } from "zod";
-import type { DebriefRequest, HintRequest } from "../../shared/schemas.ts";
+import type { AskRequest, DebriefRequest, HintRequest } from "../../shared/schemas.ts";
 import { detectThinkingStyle, type AiTask, type Effort, type JsonMode, type Thinking, type ThinkingStyle } from "../config.ts";
 import { AiOutputError, AiRefusalError, HttpError } from "../util/errors.ts";
 import { extractPartialString } from "./partialJson.ts";
 import {
   GM_EXPEDITION_SYSTEM,
   GM_PERSONA_SYSTEM,
+  MENTOR_ASK_SYSTEM,
   MENTOR_DEBRIEF_SYSTEM,
   MENTOR_HINT_SYSTEM,
   NPC_CONSTITUTION,
   buildNpcMessages,
+  renderAskInput,
   renderDebriefInput,
   renderExpeditionInput,
   renderHintInput,
@@ -26,11 +28,13 @@ import {
   renderPersonaInput,
 } from "./prompts.ts";
 import {
+  AskDraftSchema,
   DebriefDraftSchema,
   ExpeditionDraftSchema,
   HintDraftSchema,
   NpcTurnDraftSchema,
   PersonaDraftSchema,
+  type AskDraft,
   type DebriefDraft,
   type ExpeditionDraft,
   type HintDraft,
@@ -360,5 +364,16 @@ export class OpenAIGameAI implements GameAI {
 
   debrief(request: DebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft> {
     return this.#run({ task: "debrief", schema: DebriefDraftSchema, system: MENTOR_DEBRIEF_SYSTEM, messages: [{ role: "user", content: renderDebriefInput(request) }], signal, onProgress });
+  }
+
+  askMentor(request: AskRequest, onAnswer?: (answerSoFar: string) => void, signal?: AbortSignal): Promise<AskDraft> {
+    return this.#run({
+      task: "ask",
+      schema: AskDraftSchema,
+      system: MENTOR_ASK_SYSTEM,
+      messages: [{ role: "user", content: renderAskInput(request) }],
+      signal,
+      stream: onAnswer ? { field: "answer", onValue: onAnswer } : undefined,
+    });
   }
 }

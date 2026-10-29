@@ -6,7 +6,7 @@
 import { SKILL_IDS, SKILLS } from "../../shared/skills.ts";
 import { HIDDEN_CONCERN_HINT_AT, HIDDEN_CONCERN_REVEAL_AT, TURN_SOFT_CAP, rapportTier } from "../../shared/rules.ts";
 import { LENSES, SCENARIOS } from "../../shared/world.ts";
-import type { DebriefRequest, Delivery, ExpeditionContext, HintRequest, NpcCard, Persona, PlayerContext, PlayerTurn, TranscriptEntry, TurnRequest } from "../../shared/schemas.ts";
+import type { AskRequest, DebriefRequest, Delivery, ExpeditionContext, HintRequest, NpcCard, Persona, PlayerContext, PlayerTurn, TranscriptEntry, TurnRequest } from "../../shared/schemas.ts";
 import type { GroundingPack } from "../grounding/index.ts";
 import type { ComposeExpeditionInput, CreatePersonaInput } from "./types.ts";
 
@@ -312,6 +312,37 @@ Address the learner as "you". Keep the whole debrief concise and encouraging.
 
 ## Skill rubrics
 ${RUBRICS}`;
+
+export const MENTOR_ASK_SYSTEM = `${MENTOR_IDENTITY}
+
+You have already debriefed the learner on this conversation, and now they ask you about it. Answer their question:
+- Ground it in the conversation: point at their actual lines, quoting their exact words when you do.
+- Be concrete: where it helps, offer one short phrasing they could try, in their own voice.
+- Keep it under 120 words, warm and direct. Don't repeat the whole debrief; don't change the scores.
+- If they ask about the place or culture, stick to what the local said and the sources; say so when you don't know.
+- If the question isn't about the conversation or their communication, kindly steer back.
+- follow_ups: two short questions (under 12 words each) they might ask you next.
+
+## Skill rubrics
+${RUBRICS}`;
+
+export function renderAskInput(request: AskRequest): string {
+  const { debrief } = request;
+  const scores = Object.entries(debrief.scores)
+    .map(([skill, score]) => `${skill}: ${score ?? "n/a"}`)
+    .join(", ");
+  const history = request.history.map((h) => `LEARNER ASKED: ${h.question}\nYOU ANSWERED: ${h.answer}`).join("\n\n");
+  return [
+    `<conversation with ${request.persona.name}, ${request.persona.role} at ${request.persona.placeName}>`,
+    renderTranscriptForMentor(request.transcript),
+    "</conversation>",
+    `<your_debrief>\nHeadline: ${debrief.headline}\nSummary: ${debrief.summary}\nStrengths: ${debrief.strengths.join(" ")}\nGrowth (${debrief.growth.skill}): ${debrief.growth.tip}\nTheir line: "${debrief.growth.original}" → stronger: "${debrief.growth.rewrite}"\nScores (0–4): ${scores}\n</your_debrief>`,
+    history ? `<earlier_questions>\n${history}\n</earlier_questions>` : "",
+    `<question>${request.question}</question>`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
 
 function renderTranscriptForMentor(transcript: TranscriptEntry[]): string {
   const lines: string[] = [];

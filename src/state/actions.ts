@@ -117,7 +117,7 @@ export function surpriseDestination(s: GameState): Destination {
 export async function startExpedition(destination: Destination): Promise<void> {
   const s = store.get();
   if (s.ui.busy || !s.player) return;
-  store.ui({ busy: { kind: "expedition", label: destination.label, startedAt: Date.now(), progress: null, briefing: null } });
+  store.ui({ busy: { kind: "expedition", label: destination.label, destination: { lat: destination.lat, lng: destination.lng }, startedAt: Date.now(), progress: null, briefing: null } });
   const patchBusy = (patch: Partial<NonNullable<GameState["ui"]["busy"]>>) => {
     const busy = store.get().ui.busy;
     if (busy) store.ui({ busy: { ...busy, ...patch } });
@@ -498,6 +498,32 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
   } catch (error) {
     store.ui({ debriefLoading: false });
     toast("error", "The mentor couldn't finish the debrief", message(error));
+  }
+}
+
+/** Ask the mentor about the debrief; the answer streams into `ui.mentorAsking`, then joins the debrief. */
+export async function askMentor(question: string): Promise<void> {
+  const s = store.get();
+  const result = s.active.debrief;
+  const encounter = s.active.encounter;
+  const q = question.trim();
+  if (!q || !result || !encounter || encounter.id !== result.encounterId || s.ui.mentorAsking) return;
+  const { headline, summary, strengths, growth, scores } = result.debrief;
+  const history = (result.qa ?? []).map(({ question: asked, answer }) => ({ question: asked, answer }));
+  store.ui({ mentorAsking: { question: q, answer: "" } });
+  try {
+    const reply = await api.ask({ ...encounterBase(s, encounter), debrief: { headline, summary, strengths, growth, scores }, history, question: q }, (answer) =>
+      store.ui({ mentorAsking: { question: q, answer } }),
+    );
+    store.set((st) => {
+      const debrief = st.active.debrief;
+      const ui = { ...st.ui, mentorAsking: null };
+      if (!debrief || debrief.encounterId !== result.encounterId) return { ...st, ui };
+      return { ...st, active: { ...st.active, debrief: { ...debrief, qa: [...(debrief.qa ?? []), { question: q, ...reply }] } }, ui };
+    });
+  } catch (error) {
+    store.ui({ mentorAsking: null });
+    toast("error", "Your mentor couldn't answer", message(error));
   }
 }
 

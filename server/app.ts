@@ -1,6 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import {
+  AskRequestSchema,
   DebriefRequestSchema,
   ExpeditionRequestSchema,
   HintRequestSchema,
@@ -173,6 +174,20 @@ export function createApp(deps: AppDeps): express.Express {
   api.post("/coach/hint", rateLimit, async (req, res) => {
     const body = parse(HintRequestSchema, req.body);
     res.json(await engine.hint(body, abortOnClose(res)));
+  });
+
+  // Server-sent events: `answer` snapshots while the mentor writes, then `result`.
+  api.post("/coach/ask", rateLimit, async (req, res) => {
+    const body = parse(AskRequestSchema, req.body);
+    const signal = abortOnClose(res);
+    const events = openEventStream(res, log, "ask");
+    try {
+      events.send("result", await engine.ask(body, (text) => events.send("answer", { text }), signal));
+    } catch (error) {
+      events.fail(error, "Your mentor lost their train of thought. Try asking again.");
+    } finally {
+      events.close();
+    }
   });
 
   api.post("/coach/debrief", rateLimit, async (req, res) => {

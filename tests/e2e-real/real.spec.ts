@@ -74,7 +74,7 @@ test("a real expedition: Google Maps, live grounding, a real model, voice and a 
   if (config.features.voice) {
     // Speak the first message: the voice model transcribes it and says how it sounded.
     await page.getByTestId("mic-btn").click();
-    await page.waitForTimeout(6_000);
+    await page.waitForTimeout(7_000);
     await page.getByTestId("mic-btn").click();
     await expect(page.getByTestId("heard"), "the voice model hears the spoken line").toBeVisible({ timeout: 2 * MINUTE });
     const message = page.getByRole("textbox", { name: /Your message/ });

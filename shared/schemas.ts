@@ -249,7 +249,33 @@ export const DebriefRequestSchema = z.object({
 });
 export type DebriefRequest = z.infer<typeof DebriefRequestSchema>;
 
+/** The learner can ask the mentor this many follow-up questions about one debrief. */
+export const MENTOR_QUESTIONS_MAX = 5;
+
+/** What the mentor needs of its own debrief to answer follow-up questions. */
+export const DebriefRecapSchema = z.object({
+  headline: text(200),
+  summary: text(800),
+  strengths: z.array(text(300)).max(4),
+  growth: z.object({ skill: z.enum(SKILL_IDS), tip: text(400), original: text(PLAYER_MESSAGE_MAX), rewrite: text(600) }),
+  scores: z.partialRecord(z.enum(SKILL_IDS), z.number().min(0).max(4).nullable()),
+});
+
+export const AskRequestSchema = z.object({
+  ...EncounterBase,
+  debrief: DebriefRecapSchema,
+  history: z.array(z.object({ question: text(400), answer: text(1500) })).max(MENTOR_QUESTIONS_MAX),
+  question: text(400).min(2),
+});
+export type AskRequest = z.infer<typeof AskRequestSchema>;
+
 // ── Responses ─────────────────────────────────────────────────────────────
+export interface MentorAnswer {
+  answer: string;
+  /** Short questions the learner might ask next. */
+  followUps: string[];
+}
+
 export interface TurnResult {
   reply: string;
   gesture: string;

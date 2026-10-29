@@ -1,6 +1,6 @@
-import type { DebriefRequest, Destination, HintRequest, PersonaRequest, PlayerContext, TurnRequest } from "../../shared/schemas.ts";
+import type { AskRequest, DebriefRequest, Destination, HintRequest, PersonaRequest, PlayerContext, TurnRequest } from "../../shared/schemas.ts";
 import type { GroundingPack } from "../grounding/index.ts";
-import type { DebriefDraft, ExpeditionDraft, HintDraft, NpcTurnDraft, PersonaDraft } from "./schemas.ts";
+import type { AskDraft, DebriefDraft, ExpeditionDraft, HintDraft, NpcTurnDraft, PersonaDraft } from "./schemas.ts";
 
 export interface ComposeExpeditionInput {
   destination: Destination;
@@ -44,4 +44,6 @@ export interface GameAI {
   npcTurn(input: NpcTurnInput, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<NpcTurnDraft>;
   coachHint(request: HintRequest, signal?: AbortSignal): Promise<HintDraft>;
   debrief(request: DebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft>;
+  /** A follow-up question about the debrief; `onAnswer` receives the answer written so far. */
+  askMentor(request: AskRequest, onAnswer?: (answerSoFar: string) => void, signal?: AbortSignal): Promise<AskDraft>;
 }

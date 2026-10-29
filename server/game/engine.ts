@@ -16,8 +16,10 @@ import {
   initialSkillProfile,
 } from "../../shared/rules.ts";
 import { SKILL_IDS, isSkillId } from "../../shared/skills.ts";
+import { MENTOR_QUESTIONS_MAX } from "../../shared/schemas.ts";
 import { isEmotionId, isLensId, isMoveId, isScenarioId } from "../../shared/world.ts";
 import type {
+  AskRequest,
   Debrief,
   DebriefRequest,
   Difficulty,
@@ -29,6 +31,7 @@ import type {
   HintRequest,
   Insight,
   LatLng,
+  MentorAnswer,
   NpcCard,
   Persona,
   PersonaRequest,
@@ -372,6 +375,14 @@ export class GameEngine {
 
   async hint(request: HintRequest, signal?: AbortSignal): Promise<Hint> {
     return finalizeHint(await this.#deps.ai.coachHint(request, signal), request);
+  }
+
+  async ask(request: AskRequest, onAnswer?: (answerSoFar: string) => void, signal?: AbortSignal): Promise<MentorAnswer> {
+    if (request.history.length >= MENTOR_QUESTIONS_MAX) throw new HttpError(409, "mentor_done", "That's all the questions for this conversation — try the field mission, then come back with a new one.");
+    const draft = await this.#deps.ai.askMentor(request, onAnswer, signal);
+    const answer = trim(draft.answer, 1500);
+    if (!answer) throw new AiOutputError("the mentor had nothing to say");
+    return { answer, followUps: draft.follow_ups.map((f) => trim(f, 120)).filter(Boolean).slice(0, 2) };
   }
 
   async debrief(request: DebriefRequest, signal?: AbortSignal, onEvent?: OnEngineEvent): Promise<Debrief> {

@@ -2,7 +2,10 @@ import { resolve } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 const port = 8791;
-/** Speech CI synthesizes with espeak-ng; Chromium plays it as the microphone (a beep if it's missing). */
+/**
+ * Speech CI synthesizes with espeak-ng; Chromium plays it as the microphone (a beep if it's
+ * missing), on a loop: without one, only the first recording in the browser hears it.
+ */
 const microphone = resolve("test-results/real/voice-input.wav");
 
 /**
@@ -34,7 +37,7 @@ export default defineConfig({
     video: "off",
     permissions: ["microphone"],
     launchOptions: {
-      args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${microphone}%noloop`, "--autoplay-policy=no-user-gesture-required"],
+      args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${microphone}`, "--autoplay-policy=no-user-gesture-required"],
     },
   },
   webServer: {

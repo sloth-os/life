@@ -1,10 +1,12 @@
 import { useState, type CSSProperties } from "react";
+import { MENTOR_QUESTIONS_MAX } from "../../shared/schemas.ts";
 import { SKILL_IDS, SKILLS } from "../../shared/skills.ts";
 import { LENSES } from "../../shared/world.ts";
 import { Postcard } from "../components/Postcard.tsx";
-import { Avatar, MoveChips } from "../components/ui.tsx";
-import { answerReflection, currentExpedition, finishDebrief, go } from "../state/actions.ts";
+import { Avatar, MoveChips, Spinner } from "../components/ui.tsx";
+import { answerReflection, askMentor, currentExpedition, finishDebrief, go } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
+import type { DebriefResult } from "../state/types.ts";
 
 const RATING_LABELS = ["Rough", "Shaky", "Okay", "Good", "Great"];
 
@@ -185,6 +187,8 @@ export function DebriefScreen() {
           </section>
         ) : null}
 
+        <MentorChat result={result} />
+
         <section className="card mission-card" aria-labelledby="mission-title">
           <p className="eyebrow">Field mission · try it in real life</p>
           <h2 id="mission-title">{debrief.fieldMission.title}</h2>
@@ -229,5 +233,72 @@ export function DebriefScreen() {
         </button>
       </div>
     </div>
+  );
+}
+
+/** "Explain the debrief": follow-up questions to the mentor, answered from this conversation. */
+function MentorChat({ result }: { result: DebriefResult }) {
+  const { ui, active } = useGame();
+  const [draft, setDraft] = useState("");
+  const qa = result.qa ?? [];
+  const asking = ui.mentorAsking;
+  const left = MENTOR_QUESTIONS_MAX - qa.length - (asking ? 1 : 0);
+  // Questions need the conversation itself, which is kept until you leave the debrief.
+  const available = active.encounter?.id === result.encounterId;
+  const starters = qa.length
+    ? (qa.at(-1)?.followUps ?? [])
+    : [`Why did I get that score for ${SKILLS[result.debrief.growth.skill].name.toLowerCase()}?`, "How could I have said that differently?", "What did I do well?"];
+  if (!available && qa.length === 0) return null;
+  const ask = (question: string) => {
+    setDraft("");
+    void askMentor(question);
+  };
+  return (
+    <section className="card mentor-chat" aria-labelledby="ask-title" data-testid="mentor-chat">
+      <p className="eyebrow">Ask your mentor</p>
+      <h2 id="ask-title">Questions about this conversation?</h2>
+      <ol className="qa">
+        {qa.map((item, i) => (
+          <li key={i}>
+            <p className="qa__q">{item.question}</p>
+            <p className="qa__a" data-testid="qa-answer">
+              {item.answer}
+            </p>
+          </li>
+        ))}
+        {asking ? (
+          <li aria-busy="true">
+            <p className="qa__q">{asking.question}</p>
+            <p className="qa__a">{asking.answer || <Spinner label="Your mentor is thinking…" />}</p>
+          </li>
+        ) : null}
+      </ol>
+      {available && left > 0 ? (
+        <>
+          <div className="chips">
+            {starters.map((starter) => (
+              <button key={starter} type="button" className="chip" disabled={Boolean(asking)} onClick={() => ask(starter)}>
+                {starter}
+              </button>
+            ))}
+          </div>
+          <form
+            className="row ask-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (draft.trim()) ask(draft);
+            }}
+          >
+            <input value={draft} maxLength={400} onChange={(e) => setDraft(e.target.value)} placeholder="Ask anything about how it went…" aria-label="Your question for the mentor" data-testid="ask-input" />
+            <button type="submit" className="btn btn--small" disabled={!draft.trim() || Boolean(asking)} data-testid="ask-btn">
+              Ask
+            </button>
+          </form>
+          <p className="muted small">{left === 1 ? "One question left." : `${left} questions left.`}</p>
+        </>
+      ) : available ? (
+        <p className="muted small">That's all the questions for this conversation — the field mission is your next step.</p>
+      ) : null}
+    </section>
   );
 }

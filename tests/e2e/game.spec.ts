@@ -34,6 +34,14 @@ test("a full expedition: meet a local, talk, reflect, get mentored, review", asy
   await expect(debrief.locator(".evidence--watch")).toContainText("You people must all be poor here");
   await expect(debrief.getByText(/Field mission/i)).toBeVisible();
 
+  // Explain the debrief: a follow-up question, answered from this conversation.
+  await debrief.getByRole("button", { name: "How could I have said that differently?" }).click();
+  await expect(debrief.getByTestId("qa-answer")).toContainText("You could try");
+  await debrief.getByTestId("ask-input").fill("What did I do well?");
+  await debrief.getByTestId("ask-btn").click();
+  await expect(debrief.getByTestId("qa-answer")).toHaveCount(2);
+  await expect(debrief.getByText("3 questions left.")).toBeVisible();
+
   await page.getByTestId("debrief-done").click();
   await expect(page.getByRole("button", { name: /Visit .* again/ }).first()).toBeVisible();
 

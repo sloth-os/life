@@ -4,17 +4,19 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
-import type { DebriefRequest, HintRequest } from "../../shared/schemas.ts";
+import type { AskRequest, DebriefRequest, HintRequest } from "../../shared/schemas.ts";
 import type { AiTask, Effort } from "../config.ts";
 import { AiOutputError, AiRefusalError, HttpError } from "../util/errors.ts";
 import { extractPartialString } from "./partialJson.ts";
 import {
   GM_EXPEDITION_SYSTEM,
   GM_PERSONA_SYSTEM,
+  MENTOR_ASK_SYSTEM,
   MENTOR_DEBRIEF_SYSTEM,
   MENTOR_HINT_SYSTEM,
   NPC_CONSTITUTION,
   buildNpcMessages,
+  renderAskInput,
   renderDebriefInput,
   renderExpeditionInput,
   renderHintInput,
@@ -22,11 +24,13 @@ import {
   renderPersonaInput,
 } from "./prompts.ts";
 import {
+  AskDraftSchema,
   DebriefDraftSchema,
   ExpeditionDraftSchema,
   HintDraftSchema,
   NpcTurnDraftSchema,
   PersonaDraftSchema,
+  type AskDraft,
   type DebriefDraft,
   type ExpeditionDraft,
   type HintDraft,
@@ -178,5 +182,9 @@ export class ClaudeGameAI implements GameAI {
 
   debrief(request: DebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft> {
     return this.#run("debrief", DebriefDraftSchema, [cached(MENTOR_DEBRIEF_SYSTEM)], [{ role: "user", content: renderDebriefInput(request) }], signal, undefined, onProgress);
+  }
+
+  askMentor(request: AskRequest, onAnswer?: (answerSoFar: string) => void, signal?: AbortSignal): Promise<AskDraft> {
+    return this.#run("ask", AskDraftSchema, [cached(MENTOR_ASK_SYSTEM)], [{ role: "user", content: renderAskInput(request) }], signal, onAnswer ? { field: "answer", onValue: onAnswer } : undefined);
   }
 }

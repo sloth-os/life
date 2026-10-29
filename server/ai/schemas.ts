@@ -110,6 +110,11 @@ export const DebriefDraftSchema = z.object({
   memory: z.string().describe("1–2 sentences the local will remember about the learner"),
 });
 
+export const AskDraftSchema = z.object({
+  answer: z.string().describe("Your answer to the learner's question, under 120 words"),
+  follow_ups: z.array(z.string()).describe("Two short questions the learner might ask you next"),
+});
+
 export type NpcDraft = z.infer<typeof NpcDraftSchema>;
 export type ExpeditionDraft = z.infer<typeof ExpeditionDraftSchema>;
 export type InsightDraft = z.infer<typeof InsightDraftSchema>;
@@ -117,3 +122,4 @@ export type PersonaDraft = z.infer<typeof PersonaDraftSchema>;
 export type NpcTurnDraft = z.infer<typeof NpcTurnDraftSchema>;
 export type HintDraft = z.infer<typeof HintDraftSchema>;
 export type DebriefDraft = z.infer<typeof DebriefDraftSchema>;
+export type AskDraft = z.infer<typeof AskDraftSchema>;

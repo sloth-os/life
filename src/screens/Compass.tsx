@@ -182,6 +182,12 @@ export function SettingsScreen() {
           <input type="checkbox" checked={settings.reducedMotion} onChange={(e) => updateSettings({ reducedMotion: e.target.checked })} />
           <span>Reduce motion</span>
         </label>
+        {config.features.flyIns ? (
+          <label className="toggle">
+            <input type="checkbox" checked={settings.flyIns !== false && !settings.reducedMotion} disabled={settings.reducedMotion} onChange={(e) => updateSettings({ flyIns: e.target.checked })} />
+            <span>3D fly-ins over the destination while an expedition is prepared</span>
+          </label>
+        ) : null}
       </section>
 
       <section className="card">

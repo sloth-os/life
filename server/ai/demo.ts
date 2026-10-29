@@ -5,8 +5,8 @@ import { findPostcard } from "../../shared/destinations.ts";
 import { clamp, clampDelta } from "../../shared/rules.ts";
 import { SKILL_IDS, SKILLS, type SkillId } from "../../shared/skills.ts";
 import { LENS_IDS, LENSES, MOVES, SCENARIOS, type EmotionId, type LensId, type MoveId, type ScenarioId } from "../../shared/world.ts";
-import type { DebriefRequest, HintRequest, PlayerTurn, TranscriptEntry } from "../../shared/schemas.ts";
-import type { DebriefDraft, ExpeditionDraft, HintDraft, InsightDraft, NpcDraft, NpcTurnDraft, PersonaDraft } from "./schemas.ts";
+import type { AskRequest, DebriefRequest, HintRequest, PlayerTurn, TranscriptEntry } from "../../shared/schemas.ts";
+import type { AskDraft, DebriefDraft, ExpeditionDraft, HintDraft, InsightDraft, NpcDraft, NpcTurnDraft, PersonaDraft } from "./schemas.ts";
 import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, NpcTurnInput } from "./types.ts";
 import { FALLBACK_GREETING, FIELD_MISSIONS, GLOBAL_NAMES, GREETINGS, NAMES, REFLECTION_QUESTIONS, ROLES, SCENARIOS_FOR_SKILL, SCENARIO_TEMPLATES } from "./demoText.ts";
 
@@ -642,5 +642,28 @@ export class DemoGameAI implements GameAI {
       goal_achieved: goalAchieved,
       memory: `${request.player.name} stopped by and ${pos.curiosity + pos.listening > 1 ? "asked thoughtful questions" : "chatted for a bit"}${titles.length ? `; I told them about ${titles.join(" and ")}` : ""}.`,
     };
+  }
+
+  /** Scripted follow-ups: answers drawn from the debrief itself, matched to the kind of question. */
+  async askMentor(request: AskRequest, onAnswer?: (answerSoFar: string) => void): Promise<AskDraft> {
+    const q = request.question.toLowerCase();
+    const { growth, strengths } = request.debrief;
+    const skill = SKILLS[growth.skill];
+    const turns = request.transcript.filter((e): e is PlayerTurn => e.speaker === "player");
+    const best = turns.find((t) => (t.moves ?? []).some((m) => MOVES[m].valence > 0));
+    let answer: string;
+    if (/\b(why|score|rated|rating|mark)\b/.test(q)) {
+      answer = `Scores come from what you actually said. ${best ? `“${best.text.slice(0, 120)}” showed ${MOVES[(best.moves ?? []).find((m) => MOVES[m].valence > 0)!].label}, which counts in your favour. ` : ""}${skill.name} scored lower because ${lowerFirst(growth.tip.replace(/\.$/, ""))}.`;
+    } else if (/\b(how|instead|differently|better|rephrase|example|say)\b/.test(q)) {
+      answer = growth.original ? `Take your line “${growth.original.slice(0, 120)}”. You could try: “${growth.rewrite}” It keeps your voice but ${lowerFirst(skill.tagline)}` : `Try this: ${skill.example}`;
+    } else if (/\b(good|well|strength|right)\b/.test(q)) {
+      answer = strengths.length ? `${strengths.join(" ")} Keep doing that — it's what made ${request.persona.name.split(" ")[0]} open up.` : `You showed up and tried, which is the hardest part. Next time, ${lowerFirst(skill.tagline)}`;
+    } else {
+      answer = `Good question. The biggest lever for you right now is ${skill.name.toLowerCase()}: ${lowerFirst(growth.tip)} A small way to practise: ${lowerFirst(skill.example)}`;
+    }
+    await this.#type(answer, onAnswer);
+    const asked = new Set([...request.history.map((h) => h.question.toLowerCase()), q]);
+    const followUps = ["How could I have said that differently?", "What did I do well?", "Why did I get that score?", "How can I practise this in real life?"].filter((f) => !asked.has(f.toLowerCase())).slice(0, 2);
+    return { answer, follow_ups: followUps };
   }
 }

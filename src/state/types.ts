@@ -6,6 +6,7 @@ import type {
   EndReason,
   Expedition,
   ExpeditionBriefing,
+  LatLng,
   Hint,
   Insight,
   NpcCard,
@@ -31,6 +32,8 @@ export interface Settings {
   voiceOutput: boolean;
   textScale: 1 | 1.15 | 1.3;
   reducedMotion: boolean;
+  /** 3D fly-ins over Google's photorealistic map while an expedition is prepared (on unless false). */
+  flyIns?: boolean;
   theme: "system" | "light" | "dark";
   accessCode: string;
 }
@@ -144,6 +147,8 @@ export interface DebriefResult {
   calibrationGap: number | null;
   transcript: TranscriptEntry[];
   insights: Insight[];
+  /** Follow-up questions to the mentor about this debrief. */
+  qa?: { question: string; answer: string; followUps: string[] }[];
 }
 
 export interface SaveData {
@@ -177,11 +182,13 @@ export interface UiState {
   configError: string | null;
   toasts: Toast[];
   /** An expedition on its way: real progress from the server, then the briefing before the locals. */
-  busy: { kind: "expedition"; label: string; startedAt: number; progress: StreamProgress | null; briefing: ExpeditionBriefing | null } | null;
+  busy: { kind: "expedition"; label: string; destination: LatLng; startedAt: number; progress: StreamProgress | null; briefing: ExpeditionBriefing | null } | null;
   personaStatus: Record<string, "loading" | "ready" | "error">;
   hintLoading: boolean;
   debriefLoading: boolean;
   debriefProgress: StreamProgress | null;
+  /** A question to the mentor whose answer is streaming in. */
+  mentorAsking: { question: string; answer: string } | null;
   needsAccessCode: boolean;
 }
 

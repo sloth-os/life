@@ -86,6 +86,7 @@ const initialUi: UiState = {
   hintLoading: false,
   debriefLoading: false,
   debriefProgress: null,
+  mentorAsking: null,
   needsAccessCode: false,
 };
 
