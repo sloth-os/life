@@ -35,6 +35,8 @@ export default defineConfig({
     url: `http://localhost:${port}/api/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
+    // The server's [openai]/[claude] lines (timings, fallbacks, errors) belong in the CI log.
+    stdout: "pipe",
     env: { PORT: String(port) },
   },
 });

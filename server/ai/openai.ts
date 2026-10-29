@@ -206,10 +206,14 @@ export class OpenAIGameAI implements GameAI {
       } catch (error) {
         const next = NEXT_MODE[mode];
         if (next && (error instanceof OpenAI.BadRequestError || error instanceof OpenAI.UnprocessableEntityError)) {
-          this.#opts.log?.(`[openai] ${task}: the server rejected ${mode} output (${error.status}); falling back to ${next}`);
-          this.#jsonMode = next;
+          // Concurrent calls can fail on the same mode; step down once, then retry at the current mode.
+          if (this.#jsonMode === mode) {
+            this.#opts.log?.(`[openai] ${task}: the server rejected ${mode} output (${error.status}: ${error.message.slice(0, 200)}); falling back to ${next}`);
+            this.#jsonMode = next;
+          }
           continue;
         }
+        this.#opts.log?.(`[openai] ${task} failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`);
         throw toHttpError(error);
       }
     }
@@ -226,31 +230,36 @@ export class OpenAIGameAI implements GameAI {
           ? { response_format: { type: "json_object" as const } }
           : {}),
     };
-    const options = { signal, timeout: 180_000 };
+    // Always stream: some servers only stream thinking models, and a long generation keeps
+    // the connection alive instead of idling into a timeout.
+    const chunks = await this.#opts.client.chat.completions.create({ ...body, stream: true }, { signal, timeout: 180_000 });
     let text = "";
+    let reasoning = 0;
+    let firstToken = 0;
     let finish: string | null | undefined;
-    if (stream) {
-      const chunks = await this.#opts.client.chat.completions.create({ ...body, stream: true }, options);
-      let last = "";
-      for await (const chunk of chunks) {
-        const choice = chunk.choices[0];
-        if (choice?.delta?.refusal) throw new AiRefusalError(null);
-        text += choice?.delta?.content ?? "";
-        finish = choice?.finish_reason ?? finish;
+    let last = "";
+    for await (const chunk of chunks) {
+      const choice = chunk.choices[0];
+      const delta = choice?.delta as { content?: string | null; refusal?: string | null; reasoning_content?: string | null } | undefined;
+      if (delta?.refusal) throw new AiRefusalError(null);
+      // Some servers (Qwen, DeepSeek) stream reasoning separately; it only counts for the log.
+      reasoning += delta?.reasoning_content?.length ?? 0;
+      if (delta?.content) {
+        firstToken ||= Date.now() - started;
+        text += delta.content;
+      }
+      finish = choice?.finish_reason ?? finish;
+      if (stream) {
         const value = extractPartialString(stripThinking(text), stream.field);
         if (value !== null && value !== last) {
           last = value;
           stream.onValue(value);
         }
       }
-    } else {
-      const completion = await this.#opts.client.chat.completions.create(body, options);
-      const choice = completion.choices[0];
-      if (choice?.message?.refusal) throw new AiRefusalError(null);
-      text = choice?.message?.content ?? "";
-      finish = choice?.finish_reason;
     }
-    this.#opts.log?.(`[openai] ${task} ${this.#opts.model} ${mode} ${Date.now() - started}ms chars=${text.length} finish=${finish ?? "?"}`);
+    // The SDK ends an aborted stream quietly; don't mistake the partial reply for a finished one.
+    if (signal?.aborted) throw new OpenAI.APIUserAbortError();
+    this.#opts.log?.(`[openai] ${task} ${this.#opts.model} ${mode} first-token=${firstToken}ms total=${Date.now() - started}ms chars=${text.length} reasoning=${reasoning} finish=${finish ?? "?"}`);
     if (finish === "length") throw new AiOutputError("the response was cut off");
     if (finish === "content_filter") throw new AiRefusalError("content_filter");
     return text;

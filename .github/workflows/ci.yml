@@ -153,7 +153,13 @@ jobs:
       - run: npm ci
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
-      # The keys reach this step only.
+      # Fails fast, with the server's answer, if the model is unreachable or misconfigured.
+      - name: Probe the model
+        timeout-minutes: 8
+        env:
+          AI_API_KEY: ${{ secrets.VISION_MODEL_API_KEY }}
+        run: node scripts/probe-ai.ts
+      # The keys reach these steps only.
       - name: Real-services suite
         env:
           AI_API_KEY: ${{ secrets.VISION_MODEL_API_KEY }}

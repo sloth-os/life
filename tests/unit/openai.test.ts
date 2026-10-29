@@ -15,22 +15,18 @@ interface Call {
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 
-function completion(content: string, finish = "stop") {
-  return json({
-    id: "c1",
-    object: "chat.completion",
-    created: 1,
-    model: "qwen3.8-max",
-    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: finish }],
-    usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-  });
-}
-
-function streamed(content: string) {
+/** A streamed chat completion, optionally with reasoning streamed separately (as Qwen does). */
+function streamed(content: string, finish = "stop", reasoning = "") {
   const pieces = content.match(/.{1,6}/gs) ?? [];
-  const chunk = (delta: Record<string, unknown>, finish: string | null = null) =>
-    `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 1, model: "qwen3.8-max", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
-  const body = [chunk({ role: "assistant", content: "" }), ...pieces.map((p) => chunk({ content: p })), chunk({}, "stop"), "data: [DONE]\n\n"].join("");
+  const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) =>
+    `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 1, model: "qwen3.8-max", choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
+  const body = [
+    chunk({ role: "assistant", content: "" }),
+    ...(reasoning ? [chunk({ reasoning_content: reasoning })] : []),
+    ...pieces.map((p) => chunk({ content: p })),
+    chunk({}, finish),
+    "data: [DONE]\n\n",
+  ].join("");
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
@@ -86,31 +82,45 @@ describe("OpenAIGameAI", () => {
     const { ai, calls, logs } = setup((call) =>
       (call.body.response_format as { type?: string } | undefined)?.type === "json_schema"
         ? json({ error: { message: "response_format json_schema is not supported", type: "invalid_request_error" } }, 400)
-        : completion(JSON.stringify({ skill: "listening", observation: "o", suggestion: "s", example: "e" })),
+        : streamed(JSON.stringify({ skill: "listening", observation: "o", suggestion: "s", example: "e" })),
     );
     await expect(ai.coachHint(turnRequest())).resolves.toMatchObject({ skill: "listening" });
     await ai.coachHint(turnRequest());
     expect(calls.map((c) => (c.body.response_format as { type: string }).type)).toEqual(["json_schema", "json_object", "json_object"]);
+    expect(calls.every((c) => c.body.stream === true)).toBe(true);
     expect(ai.jsonMode).toBe("json_object");
     expect(logs.some((l) => l.includes("falling back to json_object"))).toBe(true);
   });
 
   it("copes with thinking tags, code fences and loose enum values", async () => {
     const reply = `<think>They asked about mangoes.</think>Sure!\n\`\`\`json\n${JSON.stringify({ ...turnDraft, emotion: "Warm", perceived_moves: ["open question", "made_up"], rapport_delta: "7" })}\n\`\`\``;
-    const { ai } = setup(() => completion(reply));
+    const { ai, logs } = setup(() => streamed(reply, "stop", "Thinking about mangoes."));
     const draft = await ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
     expect(draft).toMatchObject({ emotion: "warm", perceived_moves: ["open_question"], rapport_delta: 7 });
+    expect(logs[0]).toMatch(/turn qwen3\.8-max json_schema first-token=\d+ms total=\d+ms .* reasoning=23 finish=stop/);
   });
 
   it("asks again once when the reply isn't JSON at all", async () => {
-    const { ai, calls } = setup((_call, i) => (i === 0 ? completion("Happy to help — here you go!") : completion(JSON.stringify({ skill: "empathy", observation: "o", suggestion: "s", example: "e" }))));
+    const { ai, calls } = setup((_call, i) => (i === 0 ? streamed("Happy to help — here you go!") : streamed(JSON.stringify({ skill: "empathy", observation: "o", suggestion: "s", example: "e" }))));
     await expect(ai.coachHint(turnRequest())).resolves.toMatchObject({ skill: "empathy" });
     expect(calls).toHaveLength(2);
     expect(JSON.stringify(calls[1]!.body.messages)).toContain("wasn't valid JSON");
   });
 
+  it("steps down once when concurrent calls hit the same rejection", async () => {
+    const { ai, calls, logs } = setup((call) =>
+      (call.body.response_format as { type?: string } | undefined)?.type
+        ? json({ error: { message: "response_format is not supported", type: "invalid_request_error" } }, 400)
+        : streamed(JSON.stringify({ skill: "listening", observation: "o", suggestion: "s", example: "e" })),
+    );
+    await Promise.all([ai.coachHint(turnRequest()), ai.coachHint(turnRequest()), ai.coachHint(turnRequest())]);
+    expect(ai.jsonMode).toBe("text");
+    expect(logs.filter((l) => l.includes("falling back"))).toHaveLength(2);
+    expect(calls.filter((c) => !c.body.response_format)).toHaveLength(3);
+  });
+
   it("reports truncated replies and maps rate limits", async () => {
-    const cut = setup(() => completion('{"skill":"empathy","observ', "length"));
+    const cut = setup(() => streamed('{"skill":"empathy","observ', "length"));
     expect(((await cut.ai.coachHint(turnRequest()).catch((e: unknown) => e)) as HttpError).code).toBe("ai_output");
     const busy = setup(() => json({ error: { message: "slow down" } }, 429));
     const error = (await busy.ai.createPersona({ request: { context, npc, player } }).catch((e: unknown) => e)) as HttpError;
