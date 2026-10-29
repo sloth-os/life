@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import { SKILL_IDS, SKILLS } from "../../shared/skills.ts";
 import { LENSES } from "../../shared/world.ts";
+import { Postcard } from "../components/Postcard.tsx";
 import { Avatar, MoveChips } from "../components/ui.tsx";
 import { answerReflection, currentExpedition, finishDebrief, go } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
@@ -170,6 +171,19 @@ export function DebriefScreen() {
             </>
           ) : null}
         </section>
+
+        {expedition && (game.ui.config?.features.postcards || game.atlas.some((a) => a.expeditionId === expedition.id)) ? (
+          <section className="card" aria-labelledby="postcard-title">
+            <p className="eyebrow">Souvenir</p>
+            <h2 id="postcard-title">Your postcard from {expedition.locality.city ?? expedition.destination.label}</h2>
+            <Postcard
+              expeditionId={expedition.id}
+              label={expedition.destination.label}
+              country={expedition.locality.country ?? expedition.destination.country}
+              lenses={[...new Set(expedition.npcs.map((n) => n.lens))]}
+            />
+          </section>
+        ) : null}
 
         <section className="card mission-card" aria-labelledby="mission-title">
           <p className="eyebrow">Field mission · try it in real life</p>

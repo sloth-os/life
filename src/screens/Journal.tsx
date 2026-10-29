@@ -3,6 +3,8 @@ import { rapportTier } from "../../shared/rules.ts";
 import { SKILLS } from "../../shared/skills.ts";
 import { LENS_IDS, LENSES, type LensId } from "../../shared/world.ts";
 import { Avatar, LensTag } from "../components/ui.tsx";
+import { Postcard } from "../components/Postcard.tsx";
+import { PronounceButton } from "../components/Pronounce.tsx";
 import { canSpeak, speak } from "../lib/speech.ts";
 import { answerRecall, answerReflection, go, openExpedition, revisitPerson, toggleMission } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
@@ -181,6 +183,7 @@ export function JournalScreen() {
                       🔊
                     </button>
                   ) : null}
+                  <PronounceButton phrase={p.text} language={p.language} meaning={p.meaning} />
                 </li>
               ))}
             </ul>
@@ -277,6 +280,7 @@ export function JournalScreen() {
                         <LensTag key={l} lens={l} />
                       ))}
                     </p>
+                    <Postcard expeditionId={a.expeditionId} label={a.destination.label} country={a.country ?? a.destination.country} lenses={a.lenses} compact />
                   </div>
                   <button type="button" className="btn btn--small" onClick={() => openExpedition(a.expeditionId)} disabled={!game.expeditions.some((e) => e.id === a.expeditionId)}>
                     Return

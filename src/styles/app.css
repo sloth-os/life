@@ -1620,6 +1620,26 @@ textarea:focus {
   max-height: 160px;
 }
 
+.delivery {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-3, var(--ink-2));
+}
+
+.voice-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 6px 2px 0;
+  font-size: 0.86rem;
+  color: var(--ink-2);
+}
+
+.mic.is-on {
+  box-shadow: 0 0 0 calc(2px + var(--level, 0) * 10px) color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
 .mic.is-on {
   background: color-mix(in srgb, var(--bad) 18%, transparent);
   animation: pulse 1.2s infinite;
@@ -2439,4 +2459,64 @@ textarea:focus {
   .debrief-head {
     flex-direction: column;
   }
+}
+
+/* Pronunciation practice */
+.pronounce {
+  flex-basis: 100%;
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pronounce .btn.is-recording {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pronounce__result {
+  margin: 0;
+  font-size: 0.88rem;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.pronounce__result--great strong {
+  color: var(--good, #1f7a4d);
+}
+
+.pronounce__result--close strong {
+  color: var(--accent-2);
+}
+
+/* Postcards */
+.postcard {
+  margin: 8px 0 0;
+}
+
+.postcard img {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 8px solid #fffdf8;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+  transform: rotate(-0.6deg);
+}
+
+.postcard--compact img {
+  max-width: 220px;
+  border-width: 4px;
+  margin-top: 8px;
+}
+
+.postcard figcaption {
+  margin-top: 8px;
+}
+
+.postcard-status {
+  margin: 8px 0 0;
 }

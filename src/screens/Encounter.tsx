@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from "react";
 import { HINTS_PER_ENCOUNTER, PLAYER_MESSAGE_MAX, TURN_SOFT_CAP } from "../../shared/rules.ts";
-import type { AppConfig, Expedition, NpcCard } from "../../shared/schemas.ts";
+import type { AppConfig, Delivery, Expedition, NpcCard } from "../../shared/schemas.ts";
 import { SKILLS } from "../../shared/skills.ts";
 import { LENSES, SCENARIOS, type EmotionId } from "../../shared/world.ts";
 import { Avatar, EmotionChip, LensTag, MoveChips, RapportMeter, Spinner, formatElapsed, useElapsed } from "../components/ui.tsx";
+import { api } from "../lib/api.ts";
+import { canRecord, startRecording, type Recording } from "../lib/recorder.ts";
 import { canListen, listen } from "../lib/speech.ts";
 import { createSceneView } from "../map/index.ts";
 import type { SceneView } from "../map/types.ts";
-import { abandonEncounter, leaveEncounter, requestHint, sendMessage, submitReflection } from "../state/actions.ts";
+import { abandonEncounter, leaveEncounter, message, requestHint, sendMessage, submitReflection, toast } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 import type { EncounterState } from "../state/types.ts";
 
@@ -141,6 +143,7 @@ function Transcript({ encounter, npc }: { encounter: EncounterState; npc: NpcCar
           <li key={i} className="msg msg--player">
             <div className="msg__body">
               <p className="bubble">{entry.text}</p>
+              {entry.delivery ? <DeliveryChip delivery={entry.delivery} /> : null}
               <MoveChips moves={entry.moves ?? []} />
             </div>
           </li>
@@ -201,10 +204,29 @@ function Coach({ encounter, onUse, dismissed, onDismiss }: { encounter: Encounte
   );
 }
 
+const TONE_ICONS: Record<Delivery["tone"], string> = { warm: "🤗", friendly: "🙂", neutral: "😐", hesitant: "🤔", tense: "😬", flat: "😶", impatient: "⏩" };
+
+/** How a spoken line sounded. */
+function DeliveryChip({ delivery }: { delivery: Delivery }) {
+  return (
+    <p className="delivery" title={delivery.note}>
+      🎙 Spoken · {TONE_ICONS[delivery.tone]} {delivery.tone} · {delivery.pace} pace
+    </p>
+  );
+}
+
+type VoiceState = { kind: "idle" } | { kind: "recording"; recording: Recording; startedAt: number } | { kind: "hearing" };
+
 function Composer({ encounter }: { encounter: EncounterState }) {
-  const settings = useGame().settings;
+  const { settings, ui } = useGame();
   const [draft, setDraft] = useState("");
   const [listening, setListening] = useState<null | (() => void)>(null);
+  // Voice mode through the server's voice model: record, then the model hears what was said and how.
+  const modelVoice = Boolean(ui.config?.features.voice) && canRecord();
+  const [voice, setVoice] = useState<VoiceState>({ kind: "idle" });
+  const [delivery, setDelivery] = useState<(Delivery & { transcript: string }) | null>(null);
+  const [level, setLevel] = useState(0);
+  const recordingSeconds = useElapsed(voice.kind === "recording" ? voice.startedAt : null);
   // Hints already read: a tip folds away once you act on it (or close it).
   const [dismissedHints, setDismissedHints] = useState(encounter.hints.length);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -217,10 +239,49 @@ function Composer({ encounter }: { encounter: EncounterState }) {
     if (!text || encounter.awaiting) return;
     listening?.();
     setDraft("");
+    setDelivery(null);
     setDismissedHints(encounter.hints.length);
-    const ok = await sendMessage(text);
-    if (!ok) setDraft(text);
+    const spoken = delivery ? { tone: delivery.tone, pace: delivery.pace, clarity: delivery.clarity, note: delivery.note } : undefined;
+    const ok = await sendMessage(text, spoken);
+    if (!ok) {
+      setDraft(text);
+      if (delivery) setDelivery(delivery);
+    }
     inputRef.current?.focus();
+  };
+
+  const stopRecording = async (recording: Recording) => {
+    setVoice({ kind: "hearing" });
+    setLevel(0);
+    try {
+      const audio = await recording.stop();
+      const heard = await api.listen({ audio: audio.base64, context: `The learner is talking with ${encounter.persona.name} (${encounter.persona.role}) at ${encounter.persona.placeName}.` });
+      if (!heard.transcript.trim()) {
+        toast("info", "I didn't catch that", "Try again a little closer to the microphone.");
+      } else {
+        setDraft(heard.transcript);
+        setDelivery(heard);
+        inputRef.current?.focus();
+      }
+    } catch (error) {
+      toast("error", "Couldn't hear that", message(error));
+    } finally {
+      setVoice({ kind: "idle" });
+    }
+  };
+
+  const toggleRecording = async () => {
+    if (voice.kind === "recording") return stopRecording(voice.recording);
+    if (voice.kind !== "idle") return;
+    try {
+      let recording: Recording | null = null;
+      recording = await startRecording(setLevel, () => {
+        if (recording) void stopRecording(recording);
+      });
+      setVoice({ kind: "recording", recording, startedAt: Date.now() });
+    } catch (error) {
+      toast("error", "The microphone isn't available", error instanceof DOMException && error.name === "NotAllowedError" ? "Allow microphone access for this site to speak to locals." : message(error));
+    }
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -260,7 +321,10 @@ function Composer({ encounter }: { encounter: EncounterState }) {
           value={draft}
           maxLength={PLAYER_MESSAGE_MAX}
           rows={2}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (!e.target.value.trim()) setDelivery(null);
+          }}
           onKeyDown={onKeyDown}
           placeholder={`Say something to ${firstName}…`}
           aria-label={`Your message to ${firstName}`}
@@ -268,7 +332,20 @@ function Composer({ encounter }: { encounter: EncounterState }) {
           disabled={encounter.awaiting}
           autoFocus
         />
-        {settings.voiceInput && canListen() ? (
+        {settings.voiceInput && modelVoice ? (
+          <button
+            type="button"
+            className={`icon-btn mic${voice.kind === "recording" ? " is-on" : ""}`}
+            onClick={() => void toggleRecording()}
+            disabled={voice.kind === "hearing" || encounter.awaiting}
+            aria-pressed={voice.kind === "recording"}
+            aria-label={voice.kind === "recording" ? "Stop recording" : "Speak your message"}
+            data-testid="mic-btn"
+            style={{ "--level": level } as CSSProperties}
+          >
+            {voice.kind === "hearing" ? <Spinner /> : "🎙️"}
+          </button>
+        ) : settings.voiceInput && canListen() ? (
           <button type="button" className={`icon-btn mic${listening ? " is-on" : ""}`} onClick={toggleMic} aria-pressed={Boolean(listening)} aria-label={listening ? "Stop dictation" : "Speak your message"}>
             🎙️
           </button>
@@ -277,6 +354,22 @@ function Composer({ encounter }: { encounter: EncounterState }) {
           Send
         </button>
       </div>
+      {voice.kind === "recording" ? (
+        <p className="voice-status" role="status">
+          ● Recording {formatElapsed(recordingSeconds)} — tap the microphone again when you're done
+        </p>
+      ) : voice.kind === "hearing" ? (
+        <p className="voice-status" role="status">
+          Listening to how you said it…
+        </p>
+      ) : delivery ? (
+        <p className="voice-status" role="status" data-testid="heard">
+          {TONE_ICONS[delivery.tone]} You sounded {delivery.tone}, at a {delivery.pace} pace. {delivery.note}
+          <button type="button" className="link-btn small" onClick={() => setDelivery(null)}>
+            Send as typed
+          </button>
+        </p>
+      ) : null}
       <div className="composer__meta">
         <span className="muted small">
           {turns < TURN_SOFT_CAP ? `${turns} of ~${TURN_SOFT_CAP} turns` : "Time to wrap up"} · Enter to send

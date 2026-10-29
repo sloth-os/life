@@ -1,6 +1,7 @@
 import { rankFor } from "../../shared/rules.ts";
 import { SKILL_IDS, SKILLS, skillLevelName } from "../../shared/skills.ts";
 import { SkillRadar } from "../components/ui.tsx";
+import { canRecord } from "../lib/recorder.ts";
 import { canListen, canSpeak } from "../lib/speech.ts";
 import { setFocusSkill, updateSettings } from "../state/actions.ts";
 import { store, useGame } from "../state/store.ts";
@@ -115,6 +116,9 @@ export function SettingsScreen() {
   const game = useGame();
   const { settings } = game;
   const config = game.ui.config!;
+  const modelHears = config.features.voice && canRecord();
+  const canHear = modelHears || canListen();
+  const canVoice = config.features.voiceOutput === "model" || canSpeak();
 
   const download = () => {
     const blob = new Blob([store.exportJson()], { type: "application/json" });
@@ -135,15 +139,19 @@ export function SettingsScreen() {
       <section className="card">
         <h2>Voice</h2>
         <label className="toggle">
-          <input type="checkbox" checked={settings.voiceInput} disabled={!canListen()} onChange={(e) => updateSettings({ voiceInput: e.target.checked })} />
-          <span>Speak your messages (dictation){canListen() ? "" : " — not supported in this browser"}</span>
+          <input type="checkbox" checked={settings.voiceInput} disabled={!canHear} onChange={(e) => updateSettings({ voiceInput: e.target.checked })} data-testid="voice-input-toggle" />
+          <span>
+            Speak your messages
+            {modelHears ? " — the locals hear how you say it, and your mentor can comment on your delivery" : canListen() ? " (dictation)" : " — not supported in this browser"}
+          </span>
         </label>
         <label className="toggle">
-          <input type="checkbox" checked={settings.voiceOutput} disabled={!canSpeak()} onChange={(e) => updateSettings({ voiceOutput: e.target.checked })} />
-          <span>Read locals' replies aloud{canSpeak() ? "" : " — not supported in this browser"}</span>
+          <input type="checkbox" checked={settings.voiceOutput} disabled={!canVoice} onChange={(e) => updateSettings({ voiceOutput: e.target.checked })} data-testid="voice-output-toggle" />
+          <span>Read locals' replies aloud{canVoice ? "" : " — not supported in this browser"}</span>
         </label>
         <p className="muted small">
           Speaking out loud is closer to real conversation. The full written transcript always stays on screen.
+          {modelHears ? ` Recordings go to the voice model (${config.model ?? "AI"}) to be transcribed and are not stored.` : ""}
           {config.mapsMode === "google" ? " AI replies may include Google Maps content; sources are listed on each expedition." : ""}
         </p>
       </section>

@@ -1,6 +1,9 @@
+import { resolve } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 const port = 8791;
+/** Speech CI synthesizes with espeak-ng; Chromium plays it as the microphone (a beep if it's missing). */
+const microphone = resolve("test-results/real/voice-input.wav");
 
 /**
  * The real-services suite: Google Maps in the browser, live grounding and a real model, with
@@ -29,6 +32,10 @@ export default defineConfig({
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",
+    permissions: ["microphone"],
+    launchOptions: {
+      args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${microphone}%noloop`, "--autoplay-policy=no-user-gesture-required"],
+    },
   },
   webServer: {
     command: "npm run build && node server/index.ts",

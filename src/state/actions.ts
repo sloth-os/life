@@ -29,7 +29,7 @@ export function dismissToast(id: number): void {
   store.ui({ toasts: store.get().ui.toasts.filter((t) => t.id !== id) });
 }
 
-function message(error: unknown): string {
+export function message(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
   return String(error);

@@ -4,6 +4,7 @@ import { rankFor } from "../../shared/rules.ts";
 import type { Destination, ExpeditionBriefing, GeoResult, StreamProgress } from "../../shared/schemas.ts";
 import { SKILLS } from "../../shared/skills.ts";
 import { LENSES, SCENARIOS } from "../../shared/world.ts";
+import { PronounceButton } from "../components/Pronounce.tsx";
 import { Avatar, Difficulty, LensTag, SourceList, Spinner, formatCount, formatElapsed, useElapsed } from "../components/ui.tsx";
 import { api } from "../lib/api.ts";
 import { canSpeak, speak } from "../lib/speech.ts";
@@ -390,6 +391,7 @@ function BriefingHeader({ briefing }: { briefing: ExpeditionBriefing }) {
             🔊
           </button>
         ) : null}
+        <PronounceButton phrase={briefing.greeting.phrase} language={briefing.greeting.language} meaning={briefing.greeting.meaning} />
       </div>
 
       {briefing.curiosity.length ? (
