@@ -9,7 +9,7 @@ export function ModeBadges() {
   if (!config) return null;
   return (
     <p className="mode-badges">
-      <span className={`mode mode--${config.aiMode}`}>{config.aiMode === "claude" ? "AI: Claude" : "AI: Demo (scripted)"}</span>
+      <span className={`mode mode--${config.aiMode}`}>{config.aiMode === "claude" ? "AI: Claude" : config.aiMode === "openai" ? `AI: ${config.model}` : "AI: Demo (scripted)"}</span>
       <span className={`mode mode--${config.mapsMode}`}>{config.mapsMode === "google" ? "Map: Google Maps" : "Map: Open map"}</span>
     </p>
   );

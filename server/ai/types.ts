@@ -24,11 +24,11 @@ export interface NpcTurnInput {
 
 /**
  * The three agents behind the game — Game Master (expedition, persona),
- * Partner (NPC turns) and Mentor (hint, debrief). Implemented by Claude, or
- * by the scripted demo engine when no API key is configured.
+ * Partner (NPC turns) and Mentor (hint, debrief). Implemented by Claude, by any
+ * OpenAI-compatible model, or by the scripted demo engine when no AI is configured.
  */
 export interface GameAI {
-  readonly mode: "claude" | "demo";
+  readonly mode: "claude" | "openai" | "demo";
   composeExpedition(input: ComposeExpeditionInput, signal?: AbortSignal): Promise<ExpeditionDraft>;
   createPersona(input: CreatePersonaInput, signal?: AbortSignal): Promise<PersonaDraft>;
   /** `onReply` receives the reply text decoded so far (a snapshot, not a delta). */

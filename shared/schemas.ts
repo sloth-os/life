@@ -87,7 +87,7 @@ export const ExpeditionSchema = z.object({
   id: text(40),
   createdAt: z.number(),
   mapsMode: z.enum(["google", "open"]),
-  aiMode: z.enum(["claude", "demo"]),
+  aiMode: z.enum(["claude", "openai", "demo"]),
   destination: DestinationSchema,
   locality: LocalitySchema,
   title: text(120),
@@ -279,7 +279,7 @@ export interface GeoResult {
 export interface AppConfig {
   version: string;
   mapsMode: "google" | "open";
-  aiMode: "claude" | "demo";
+  aiMode: "claude" | "openai" | "demo";
   model?: string;
   googleMapsApiKey?: string;
   googleMapId?: string;

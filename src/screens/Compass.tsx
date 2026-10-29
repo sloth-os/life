@@ -180,7 +180,13 @@ export function SettingsScreen() {
         <h2>About this game</h2>
         <dl className="facts">
           <dt>AI</dt>
-          <dd>{config.aiMode === "claude" ? `Claude (${config.model})` : "Demo AI — scripted locals built from real sources. Add an Anthropic API key on the server for Claude."}</dd>
+          <dd>
+            {config.aiMode === "claude"
+              ? `Claude (${config.model})`
+              : config.aiMode === "openai"
+                ? `${config.model} (OpenAI-compatible API)`
+                : "Demo AI — scripted locals built from real sources. Configure Claude or an OpenAI-compatible model on the server for AI locals."}
+          </dd>
           <dt>Map</dt>
           <dd>{config.mapsMode === "google" ? "Google Maps (Maps JavaScript API, Street View)" : "Open map mode (MapLibre · OpenFreeMap · © OpenStreetMap contributors)"}</dd>
           <dt>Place grounding</dt>

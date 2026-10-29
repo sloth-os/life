@@ -10,7 +10,7 @@
 |---|---|---|
 | ![World map](docs/images/world.jpg) | ![Encounter](docs/images/encounter.jpg) | ![Debrief](docs/images/debrief.jpg) |
 
-*(Screenshots are from Demo AI + Open map mode. With API keys you get Claude-played locals, Google Maps and Street View.)*
+*(Screenshots are from Demo AI + Open map mode. With API keys you get locals played by Claude or any OpenAI-compatible model, Google Maps and Street View.)*
 
 ## Why it works
 
@@ -42,6 +42,7 @@ cp .env.example .env   # then fill in what you have
 | Variable | What it enables |
 |---|---|
 | `ANTHROPIC_API_KEY` | **Claude** plays the Game Master, the locals and the mentor (default model `claude-opus-5-5`; override with `CLAUDE_MODEL`) |
+| `AI_PROVIDER=openai`, `AI_MODEL`, `AI_BASE_URL`, `AI_API_KEY` | Any **OpenAI-compatible** model instead, through the OpenAI SDK: OpenAI, a gateway, vLLM, Ollama… (`OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` work too). The `AI_*` variables also configure Claude with `AI_PROVIDER=anthropic`. |
 | `GOOGLE_MAPS_API_KEY` | **Google Maps** in the browser: the interactive map, Advanced Markers and **Street View** at each local's spot. Enable the *Maps JavaScript API* and restrict the key by HTTP referrer. |
 | `GOOGLE_MAPS_MAP_ID` | Your Map ID (defaults to `DEMO_MAP_ID` for testing) |
 | `GOOGLE_MAPS_SERVER_KEY` | **Maps Experience agent tools** (MCP, `mapstools.googleapis.com`): grounds the AI in real Google Maps places and live weather, and powers "Go anywhere" search. Enable that API and restrict the key by API, not referrer. |
@@ -49,6 +50,7 @@ cp .env.example .env   # then fill in what you have
 | `RATE_LIMIT_PER_10MIN`, `TRUST_PROXY` | AI requests per player per 10 minutes (default 120; a shared classroom IP gets 10×). Set `TRUST_PROXY=true` behind a proxy. |
 | `APP_USER_AGENT` | Contact string sent to Wikipedia, Nominatim and Open-Meteo, as their usage policies ask. Please set it. |
 | `EFFORT_TURN`, `EFFORT_DEBRIEF`, … | Claude effort per task (defaults: `low` for turns and hints, `medium` for the rest) |
+| `OPENAI_JSON_MODE` | Structured output to try first with OpenAI-compatible servers: `json_schema` (default), `json_object` or `text`. The game steps down automatically when a server rejects one. |
 
 Production: `npm run build && npm start`.
 
@@ -66,9 +68,9 @@ It takes the same environment variables as above (or `--env-file .env`). Tags ar
 
 ### Modes
 
-| | **Demo AI** (no key) | **Claude** |
+| | **Demo AI** (no key) | **Claude** or **OpenAI-compatible** |
 |---|---|---|
-| **Open map** (no Google key) | Scripted locals; MapLibre + OpenFreeMap; Wikipedia photos of places | Claude locals on the open map |
+| **Open map** (no Google key) | Scripted locals; MapLibre + OpenFreeMap; Wikipedia photos of places | AI locals on the open map |
 | **Google Maps** | Scripted locals on Google Maps + Street View | The full experience |
 
 Google content and the open map are **never mixed on one screen** (Google Maps Platform terms §3.2.3(e)).
@@ -108,7 +110,7 @@ LLM output may draw on Google Maps data only through **Maps Experience agent too
 
 This is engineering diligence, not legal advice. Review the terms for your own deployment.
 
-**Usage per expedition** (approximate): 1 expedition call + 3 persona calls (prefetched) + one call per player message + optional hints + 1 debrief ≈ 15–20 Claude calls. Google side: 5 `search_places` + 1 `lookup_weather` per expedition, 1 map load per session, and 1 Street View load per encounter.
+**Usage per expedition** (approximate): 1 expedition call + 3 persona calls (prefetched) + one call per player message + optional hints + 1 debrief ≈ 15–20 model calls. Google side: 5 `search_places` + 1 `lookup_weather` per expedition, 1 map load per session, and 1 Street View load per encounter.
 
 ## Development
 
@@ -119,14 +121,19 @@ npm run test:e2e     # browser tests on desktop Chromium (Playwright)
 
 ./scripts/start-redroid.sh   # a real Android device: redroid (Android 12 in Docker) + Chromium
 npm run test:e2e:mobile      # the same journey on that device, at phone and tablet sizes
+
+npm run test:e2e:real        # real services: Google Maps, live grounding and a real model (costs money)
 ```
+
+The real suite runs the production build against whatever the environment configures (`AI_*` or `ANTHROPIC_API_KEY`, plus `GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`). It serves on `http://localhost:8791`, which a referrer-restricted browser Maps key must allow.
 
 The mobile tests drive Chromium on a real Android system rather than desktop emulation, so touch, viewport and layout behave as on a phone. They need Docker and the `binder_linux` kernel module; the script installs the module if it's missing and reuses a running device.
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the build and typecheck, unit and integration tests, and the browser tests in two jobs: desktop Chromium, and a real Android device (redroid) at phone and tablet sizes. When they all pass, it builds the multi-arch Docker image; it publishes the image only for pushes to `main`.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the build and typecheck, unit and integration tests, and the browser tests in two jobs: desktop Chromium, and a real Android device (redroid) at phone and tablet sizes. When they all pass, it builds the multi-arch Docker image; it publishes the image only for pushes to `main`. On pushes to `main` and manual runs (never pull requests), it also runs the **real-services suite** with the organization's `GOOGLE_MAPS_API_KEY` and `VISION_MODEL_*` settings mapped onto `AI_*`. It records no traces, because they would capture the browser Maps key.
 
 The tests run without network or keys:
 - **Claude**: the real Anthropic SDK with a fake `fetch` serving streamed responses. Checks the request shape (model, effort, structured output schema, caching, fallback beta) and the handling of refusals, truncation, schema violations and rate limits.
+- **OpenAI-compatible**: the real OpenAI SDK with a fake `fetch`. Covers strict JSON-schema requests, streaming, stepping down to JSON mode when a server rejects schemas, `<think>` blocks and code fences, coercing loose enum values, a repair round for non-JSON replies, and error mapping.
 - **Maps agent tools**: our MCP client against a local MCP server with the same tool names and argument shapes.
 - **API**: the full HTTP flow through the real engine with Demo AI, including SSE streaming, access codes and rate limiting.
 - **E2E**: onboarding → travel → conversation (including a stereotyping line flagged as `⚠ assumption`) → coach → reflection → debrief → journal review. Runs on desktop Chromium, and on Chromium on a real Android device at phone (390×844) and tablet (768×1024) sizes, with layout checks for each.
@@ -134,7 +141,7 @@ The tests run without network or keys:
 ```
 shared/        game vocabulary + rules + API schemas (used by both sides)
 server/
-  ai/          Claude engine, Demo engine, prompts, output schemas, streaming JSON
+  ai/          Claude and OpenAI-compatible engines, Demo engine, prompts, output schemas, streaming JSON
   game/        engine: orchestration + authoritative rules
   grounding/   Maps agent tools (MCP), Wikipedia, Open-Meteo, Nominatim
 src/           React client: screens, map adapters (Google / MapLibre), state
