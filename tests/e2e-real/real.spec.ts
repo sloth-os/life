@@ -4,6 +4,9 @@ import { expect, test } from "@playwright/test";
 import { onboard, say } from "../e2e/helpers.ts";
 
 const MINUTE = 60_000;
+// Thinking models can reason for minutes before they answer: with qwen3.8-max an expedition
+// took about 4 minutes and a persona 2–3. Generous budgets keep a slow day from failing the run.
+const COMPOSE_TIMEOUT = 10 * MINUTE;
 
 test("a real expedition: Google Maps, live grounding and a real model", async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
@@ -27,14 +30,14 @@ test("a real expedition: Google Maps, live grounding and a real model", async ({
   // The model composes an expedition from live grounding.
   await page.locator(".postcard-row", { hasText: "Kyoto" }).click();
   await page.getByRole("button", { name: "Travel here" }).click();
-  await expect(page.getByText(/^Say hello in/), "the model composes an expedition").toBeVisible({ timeout: 6 * MINUTE });
+  await expect(page.getByText(/^Say hello in/), "the model composes an expedition").toBeVisible({ timeout: COMPOSE_TIMEOUT });
   await expect(page.locator(".scene")).not.toBeEmpty();
   expect(await page.locator(".local-card").count(), "the expedition has locals to meet").toBeGreaterThan(0);
   await snap("expedition");
 
   // …then a local's persona, met where Google has Street View (or a place card where it doesn't).
   const meet = page.locator('[data-testid^="meet-"]').first();
-  await expect(meet, "the model creates the local's persona").toBeEnabled({ timeout: 6 * MINUTE });
+  await expect(meet, "the model creates the local's persona").toBeEnabled({ timeout: COMPOSE_TIMEOUT });
   await meet.click();
   await expect(page.getByRole("meter", { name: /Rapport/ })).toBeVisible();
   await expect(page.getByText("Finding a street view…")).toHaveCount(0, { timeout: MINUTE });
@@ -49,11 +52,13 @@ test("a real expedition: Google Maps, live grounding and a real model", async ({
 
   // The local may or may not end it on goodbye; either way, reflect and get mentored.
   const end = page.getByRole("button", { name: "End conversation" });
+  const rate = page.getByTestId("rate-4");
+  await expect(rate.or(end)).toBeVisible();
   if (await end.isVisible()) await end.click();
-  await page.getByTestId("rate-4").click();
+  await rate.click();
   await page.getByTestId("get-feedback").click();
   const debrief = page.getByTestId("debrief");
-  await expect(debrief, "the model writes the mentor debrief").toBeVisible({ timeout: 6 * MINUTE });
+  await expect(debrief, "the model writes the mentor debrief").toBeVisible({ timeout: COMPOSE_TIMEOUT });
   await expect(debrief.getByRole("heading", { level: 1 })).not.toBeEmpty();
   await snap("debrief");
 

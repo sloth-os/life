@@ -10,8 +10,8 @@ const port = 8791;
 export default defineConfig({
   testDir: "tests/e2e-real",
   outputDir: "test-results/real",
-  // Models can take minutes per step.
-  timeout: 20 * 60_000,
+  // Thinking models can take minutes per step (tests/e2e-real/real.spec.ts).
+  timeout: 30 * 60_000,
   expect: { timeout: 3 * 60_000 },
   fullyParallel: false,
   workers: 1,

@@ -275,7 +275,7 @@ Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specif
 
 ## 12. Roadmap
 
-- **v1 (this build)**: everything above, playable in Google or Open mode, with Claude or Demo AI.
+- **v1 (this build)**: everything above, playable in Google or Open mode, with Claude, any OpenAI-compatible model, or Demo AI.
 - **v1.1**: richer voice mode; photorealistic 3D fly-ins (`Map3DElement`); more postcards; localization of the interface.
 - **v2**: classroom mode (teacher-assigned expeditions and focus skills, a class debrief view); two-person mediation scenes; Pro agent-tools options (review-based place insights); an "explain the debrief" follow-up chat with the mentor.
 

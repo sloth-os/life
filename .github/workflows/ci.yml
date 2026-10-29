@@ -136,7 +136,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: real-check
     if: needs.real-check.outputs.configured == 'true'
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       # The org's model settings map onto the app's provider-neutral AI_* variables.
       AI_PROVIDER: ${{ vars.VISION_MODEL_TYPE }}

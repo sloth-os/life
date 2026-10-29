@@ -125,7 +125,7 @@ npm run test:e2e:mobile      # the same journey on that device, at phone and tab
 npm run test:e2e:real        # real services: Google Maps, live grounding and a real model (costs money)
 ```
 
-The real suite runs the production build against whatever the environment configures (`AI_*` or `ANTHROPIC_API_KEY`, plus `GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`). It serves on `http://localhost:8791`, which a referrer-restricted browser Maps key must allow.
+The real suite runs the production build against whatever the environment configures (`AI_*` or `ANTHROPIC_API_KEY`, plus `GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`). It serves on `http://localhost:8791`, which a referrer-restricted browser Maps key must allow. To check an OpenAI-compatible model before a whole run, `node scripts/probe-ai.ts` asks it for a tiny JSON reply in each structured-output mode and reports what its server accepts.
 
 The mobile tests drive Chromium on a real Android system rather than desktop emulation, so touch, viewport and layout behave as on a phone. They need Docker and the `binder_linux` kernel module; the script installs the module if it's missing and reuses a running device.
 
