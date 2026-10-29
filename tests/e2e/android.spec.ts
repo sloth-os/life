@@ -42,9 +42,12 @@ for (const profile of PROFILES) {
       const pageErrors: string[] = [];
       page.on("pageerror", (error) => pageErrors.push(error.message));
 
-      // A fresh game for each profile: the browser profile persists between launches.
-      await page.goto("/");
+      // A fresh game for each profile: the browser profile persists between launches. Clear it
+      // from a page where the app isn't running, or the app's save-on-unload would write the
+      // previous game straight back.
+      await page.goto("/api/health");
       await page.evaluate(() => localStorage.clear());
+      await page.goto("/");
 
       const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio }));
       await testInfo.attach("viewport", { body: JSON.stringify({ profile, viewport, appUrl }, null, 2), contentType: "application/json" });
