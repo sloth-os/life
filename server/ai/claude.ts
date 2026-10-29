@@ -4,7 +4,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
-import type { AskRequest, DebriefRequest, HintRequest } from "../../shared/schemas.ts";
+import type { AskRequest, DebriefRequest, HintRequest, MediationDebriefRequest, MediationSceneRequest } from "../../shared/schemas.ts";
 import type { AiTask, Effort } from "../config.ts";
 import { AiOutputError, AiRefusalError, HttpError } from "../util/errors.ts";
 import { extractPartialString } from "./partialJson.ts";
@@ -26,18 +26,23 @@ import {
 import {
   AskDraftSchema,
   DebriefDraftSchema,
+  MediationTurnDraftSchema,
+  SceneDraftSchema,
   ExpeditionDraftSchema,
   HintDraftSchema,
   NpcTurnDraftSchema,
   PersonaDraftSchema,
   type AskDraft,
   type DebriefDraft,
+  type MediationTurnDraft,
+  type SceneDraft,
   type ExpeditionDraft,
   type HintDraft,
   type NpcTurnDraft,
   type PersonaDraft,
 } from "./schemas.ts";
-import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, NpcTurnInput, OnProgress } from "./types.ts";
+import { GM_SCENE_SYSTEM, MEDIATION_CONSTITUTION, MENTOR_MEDIATION_SYSTEM, buildMediationMessages, renderMediationDebriefInput, renderSceneBlock, renderSceneInput } from "./mediationPrompts.ts";
+import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, MediationTurnInput, NpcTurnInput, OnProgress } from "./types.ts";
 
 /** Structured outputs on the beta endpoint, plus server-side refusal fallback ("default" routing). */
 const BETAS: Anthropic.Beta.AnthropicBeta[] = ["structured-outputs-2025-12-15", "server-side-fallback-2026-07-01"];
@@ -186,5 +191,18 @@ export class ClaudeGameAI implements GameAI {
 
   askMentor(request: AskRequest, onAnswer?: (answerSoFar: string) => void, signal?: AbortSignal): Promise<AskDraft> {
     return this.#run("ask", AskDraftSchema, [cached(MENTOR_ASK_SYSTEM)], [{ role: "user", content: renderAskInput(request) }], signal, onAnswer ? { field: "answer", onValue: onAnswer } : undefined);
+  }
+
+  createScene(request: MediationSceneRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<SceneDraft> {
+    return this.#run("scene", SceneDraftSchema, [cached(GM_SCENE_SYSTEM)], [{ role: "user", content: renderSceneInput(request) }], signal, undefined, onProgress);
+  }
+
+  mediationTurn(input: MediationTurnInput, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<MediationTurnDraft> {
+    const system = [cached(MEDIATION_CONSTITUTION), cached(renderSceneBlock(input.request))];
+    return this.#run("turn", MediationTurnDraftSchema, system, buildMediationMessages(input.request, input.turnNumber, input.wrapUp), signal, onReply ? { field: "text", onValue: onReply } : undefined);
+  }
+
+  mediationDebrief(request: MediationDebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft> {
+    return this.#run("debrief", DebriefDraftSchema, [cached(MENTOR_MEDIATION_SYSTEM)], [{ role: "user", content: renderMediationDebriefInput(request) }], signal, undefined, onProgress);
   }
 }

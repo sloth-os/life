@@ -163,3 +163,16 @@ export function isDue(state: RecallState, now: number): boolean {
 
 /** Google Maps coordinates may be cached for at most 30 days. */
 export const MAPS_COORDINATE_RETENTION_MS = 30 * DAY_MS;
+
+// ── Mediation scenes ──────────────────────────────────────────────────────
+/** Each party starts neutral towards the learner, who is a stranger stepping in. */
+export const MEDIATION_STARTING_RAPPORT = 45;
+export const TENSION_DELTA_MIN = -15;
+export const TENSION_DELTA_MAX = 15;
+/** They can settle only once tension has come down this far and both trust the learner this much. */
+export const AGREEMENT_TENSION_MAX = 45;
+export const AGREEMENT_RAPPORT_MIN = 40;
+/** Past this, one of them walks off. */
+export const WALKOUT_TENSION = 95;
+export const MEDIATION_TURN_SOFT_CAP = 10;
+export const MEDIATION_TURN_HARD_CAP = 14;

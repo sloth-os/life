@@ -69,7 +69,9 @@ async function toWav(blob: Blob): Promise<{ base64: string; seconds: number }> {
  * recording stops by itself after the voice limit.
  */
 export async function startRecording(onLevel?: (level: number) => void, onAutoStop?: () => void): Promise<Recording> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  // No automatic gain or noise suppression: they distort speech (clipping it, in tests) and flatten
+  // the tone and pace the voice model listens for. Echo cancellation stays, for locals' voices.
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
   const recorder = new MediaRecorder(stream);
   const chunks: Blob[] = [];
   recorder.ondataavailable = (event) => {

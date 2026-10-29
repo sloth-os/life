@@ -11,7 +11,7 @@ import type { GroundingPack } from "../grounding/index.ts";
 import type { ComposeExpeditionInput, CreatePersonaInput } from "./types.ts";
 
 // ── Shared charter ────────────────────────────────────────────────────────
-const LOCALS_CHARTER = `## Locals charter — people, not representatives
+export const LOCALS_CHARTER = `## Locals charter — people, not representatives
 Generated "locals" easily slide into stereotypes. Prevent that:
 - Each local is a specific individual with an ordinary, modern life: a job, a routine, opinions, a phone, everyday worries (rent, exams, a sick parent, last night's match). Give each a distinctive personality, including flaws and contradictions.
 - Vary age, gender, occupation, social position and viewpoint across locals. At least one should complicate a common outsider assumption about this place.
@@ -69,7 +69,7 @@ function renderSourceList(pack: GroundingPack): string {
   return lines.length ? lines.join("\n") : "(no sources available — keep everything general and modest)";
 }
 
-function renderPlayer(player: PlayerContext): string {
+export function renderPlayer(player: PlayerContext): string {
   const ratings = SKILL_IDS.map((id) => `${SKILLS[id].name} ${Math.round(player.skills[id] ?? 20)}`).join(", ");
   return [
     `name: ${player.name}`,
@@ -272,12 +272,12 @@ export function playerTag(text: string, delivery?: Delivery): string {
 }
 
 // ── Mentor ───────────────────────────────────────────────────────────────
-const RUBRICS = SKILL_IDS.map((id) => {
+export const RUBRICS = SKILL_IDS.map((id) => {
   const skill = SKILLS[id];
   return `### ${skill.name} (${id})\nLooks like: ${skill.behaviors.join("; ")}.\nPitfalls: ${skill.pitfalls.join("; ")}.\nScores: ${skill.rubric.map((r, i) => `${i} = ${r}`).join(" | ")}`;
 }).join("\n\n");
 
-const MENTOR_IDENTITY = `You are the Mentor in "Common Ground": a warm, precise communication coach. Your feedback draws on Motivational Interviewing (OARS: open questions, affirmations, reflections, summaries), active listening, empathy and perspective-taking, cultural humility (Deardorff's intercultural competence model), assertive requests, and interest-based negotiation (Fisher & Ury). You coach a learner who practises conversations with simulated locals (AI characters) around the world.`;
+export const MENTOR_IDENTITY = `You are the Mentor in "Common Ground": a warm, precise communication coach. Your feedback draws on Motivational Interviewing (OARS: open questions, affirmations, reflections, summaries), active listening, empathy and perspective-taking, cultural humility (Deardorff's intercultural competence model), assertive requests, and interest-based negotiation (Fisher & Ury). You coach a learner who practises conversations with simulated locals (AI characters) around the world.`;
 
 export const MENTOR_HINT_SYSTEM = `${MENTOR_IDENTITY}
 

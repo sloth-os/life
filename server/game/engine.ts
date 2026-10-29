@@ -4,6 +4,8 @@
 import { randomBytes } from "node:crypto";
 import {
   INSIGHT_THRESHOLDS,
+  MEDIATION_TURN_HARD_CAP,
+  MEDIATION_TURN_SOFT_CAP,
   RAPPORT_MIN,
   STARTING_RAPPORT,
   TURN_HARD_CAP,
@@ -20,6 +22,11 @@ import { MENTOR_QUESTIONS_MAX } from "../../shared/schemas.ts";
 import { isEmotionId, isLensId, isMoveId, isScenarioId } from "../../shared/world.ts";
 import type {
   AskRequest,
+  MediationDebriefRequest,
+  MediationScene,
+  MediationSceneRequest,
+  MediationTurnRequest,
+  MediationTurnResult,
   Debrief,
   DebriefRequest,
   Difficulty,
@@ -45,6 +52,7 @@ import type { DebriefDraft, ExpeditionDraft, HintDraft, InsightDraft, NpcTurnDra
 import type { AiProgress, GameAI, OnProgress } from "../ai/types.ts";
 import type { GroundingPack, GroundingService } from "../grounding/index.ts";
 import { AiOutputError, HttpError } from "../util/errors.ts";
+import { finalizeScene, resolveMediationTurn } from "./mediation.ts";
 
 const trim = (value: string | undefined | null, max: number): string => (value ?? "").trim().slice(0, max);
 
@@ -244,7 +252,8 @@ function closestLine(text: string, lines: string[]): string {
   return best;
 }
 
-export function finalizeDebrief(draft: DebriefDraft, request: DebriefRequest): Debrief {
+/** Verbatim-checks the mentor's quotes against the learner's own lines (encounters and mediation alike). */
+export function finalizeDebrief(draft: DebriefDraft, request: { transcript: { speaker: string; text: string }[]; player: DebriefRequest["player"] }): Debrief {
   const lines = request.transcript.filter((e) => e.speaker === "player").map((e) => e.text);
   const scores = {} as Debrief["scores"];
   for (const id of SKILL_IDS) {
@@ -375,6 +384,21 @@ export class GameEngine {
 
   async hint(request: HintRequest, signal?: AbortSignal): Promise<Hint> {
     return finalizeHint(await this.#deps.ai.coachHint(request, signal), request);
+  }
+
+  async createScene(request: MediationSceneRequest, signal?: AbortSignal, onEvent?: OnEngineEvent): Promise<MediationScene> {
+    return finalizeScene(await this.#deps.ai.createScene(request, signal, onEvent ? progressReporter(onEvent).onProgress() : undefined), request);
+  }
+
+  async mediationTurn(request: MediationTurnRequest, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<MediationTurnResult> {
+    const turnNumber = request.transcript.filter((e) => e.speaker === "player").length + 1;
+    if (turnNumber > MEDIATION_TURN_HARD_CAP) throw new HttpError(409, "encounter_over", "This conversation has already ended.");
+    const draft = await this.#deps.ai.mediationTurn({ request, turnNumber, wrapUp: turnNumber >= MEDIATION_TURN_SOFT_CAP }, onReply, signal);
+    return resolveMediationTurn(request, draft, turnNumber);
+  }
+
+  async mediationDebrief(request: MediationDebriefRequest, signal?: AbortSignal, onEvent?: OnEngineEvent): Promise<Debrief> {
+    return finalizeDebrief(await this.#deps.ai.mediationDebrief(request, signal, onEvent ? progressReporter(onEvent).onProgress() : undefined), request);
   }
 
   async ask(request: AskRequest, onAnswer?: (answerSoFar: string) => void, signal?: AbortSignal): Promise<MentorAnswer> {

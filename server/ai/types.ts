@@ -1,6 +1,17 @@
-import type { AskRequest, DebriefRequest, Destination, HintRequest, PersonaRequest, PlayerContext, TurnRequest } from "../../shared/schemas.ts";
+import type {
+  AskRequest,
+  DebriefRequest,
+  Destination,
+  HintRequest,
+  MediationDebriefRequest,
+  MediationSceneRequest,
+  MediationTurnRequest,
+  PersonaRequest,
+  PlayerContext,
+  TurnRequest,
+} from "../../shared/schemas.ts";
 import type { GroundingPack } from "../grounding/index.ts";
-import type { AskDraft, DebriefDraft, ExpeditionDraft, HintDraft, NpcTurnDraft, PersonaDraft } from "./schemas.ts";
+import type { AskDraft, DebriefDraft, ExpeditionDraft, HintDraft, MediationTurnDraft, NpcTurnDraft, PersonaDraft, SceneDraft } from "./schemas.ts";
 
 export interface ComposeExpeditionInput {
   destination: Destination;
@@ -18,6 +29,13 @@ export interface CreatePersonaInput {
 export interface NpcTurnInput {
   request: TurnRequest;
   /** 1-based count of player messages including this one. */
+  turnNumber: number;
+  wrapUp: boolean;
+}
+
+export interface MediationTurnInput {
+  request: MediationTurnRequest;
+  /** 1-based count of the learner's messages including this one. */
   turnNumber: number;
   wrapUp: boolean;
 }
@@ -46,4 +64,10 @@ export interface GameAI {
   debrief(request: DebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft>;
   /** A follow-up question about the debrief; `onAnswer` receives the answer written so far. */
   askMentor(request: AskRequest, onAnswer?: (answerSoFar: string) => void, signal?: AbortSignal): Promise<AskDraft>;
+  /** Mediation scenes: the Game Master sets up two locals at odds… */
+  createScene(request: MediationSceneRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<SceneDraft>;
+  /** …the model plays both while the learner mediates (`onReply` gets the first reply so far)… */
+  mediationTurn(input: MediationTurnInput, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<MediationTurnDraft>;
+  /** …and the mentor debriefs the mediation. */
+  mediationDebrief(request: MediationDebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft>;
 }

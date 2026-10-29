@@ -5,10 +5,10 @@ import { findPostcard } from "../../shared/destinations.ts";
 import { clamp, clampDelta } from "../../shared/rules.ts";
 import { SKILL_IDS, SKILLS, type SkillId } from "../../shared/skills.ts";
 import { LENS_IDS, LENSES, MOVES, SCENARIOS, type EmotionId, type LensId, type MoveId, type ScenarioId } from "../../shared/world.ts";
-import type { AskRequest, DebriefRequest, HintRequest, PlayerTurn, TranscriptEntry } from "../../shared/schemas.ts";
-import type { AskDraft, DebriefDraft, ExpeditionDraft, HintDraft, InsightDraft, NpcDraft, NpcTurnDraft, PersonaDraft } from "./schemas.ts";
-import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, NpcTurnInput } from "./types.ts";
-import { FALLBACK_GREETING, FIELD_MISSIONS, GLOBAL_NAMES, GREETINGS, NAMES, REFLECTION_QUESTIONS, ROLES, SCENARIOS_FOR_SKILL, SCENARIO_TEMPLATES } from "./demoText.ts";
+import type { AskRequest, DebriefRequest, HintRequest, MediationDebriefRequest, MediationSceneRequest, PlayerTurn, TranscriptEntry } from "../../shared/schemas.ts";
+import type { AskDraft, DebriefDraft, ExpeditionDraft, HintDraft, InsightDraft, MediationTurnDraft, NpcDraft, NpcTurnDraft, PersonaDraft, SceneDraft } from "./schemas.ts";
+import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, MediationTurnInput, NpcTurnInput } from "./types.ts";
+import { FALLBACK_GREETING, FIELD_MISSIONS, GLOBAL_NAMES, GREETINGS, NAMES, REFLECTION_QUESTIONS, ROLES, SCENARIOS_FOR_SKILL, SCENARIO_TEMPLATES, SCENE_TEMPLATES } from "./demoText.ts";
 
 // ── Deterministic helpers ────────────────────────────────────────────────
 export function hashString(text: string): number {
@@ -665,5 +665,138 @@ export class DemoGameAI implements GameAI {
     const asked = new Set([...request.history.map((h) => h.question.toLowerCase()), q]);
     const followUps = ["How could I have said that differently?", "What did I do well?", "Why did I get that score?", "How can I practise this in real life?"].filter((f) => !asked.has(f.toLowerCase())).slice(0, 2);
     return { answer, follow_ups: followUps };
+  }
+
+  /** A scripted disagreement, with names that fit the place. */
+  async createScene(request: MediationSceneRequest): Promise<SceneDraft> {
+    const seed = hashString(request.context.expeditionId);
+    const t = SCENE_TEMPLATES[seed % SCENE_TEMPLATES.length]!;
+    const pool = NAMES[request.context.locality.country ?? ""] ?? GLOBAL_NAMES;
+    const [nameA, pronounsA] = pick(pool, seed);
+    // A second name, with other pronouns where the pool has them, for a varied pair.
+    const others = pool.filter(([n]) => n !== nameA);
+    const contrast = others.filter(([, p]) => p !== pronounsA);
+    const [nameB, pronounsB] = pick(contrast.length ? contrast : others.length ? others : GLOBAL_NAMES, seed + 1);
+    const side = (x: typeof t.a, name: string, pronouns: string, age: number) => ({ name, age, role: x.role, pronouns, position: x.position, interest: x.interest, temperament: x.temperament });
+    return {
+      title: t.title,
+      place_name: t.place,
+      situation: t.situation,
+      topic: t.topic,
+      party_a: side(t.a, nameA, pronounsA, 30 + (seed % 25)),
+      party_b: side(t.b, nameB, pronounsB, 28 + ((seed >> 3) % 30)),
+      shared_interest: t.shared,
+      goal: `Help ${nameA} and ${nameB} find an arrangement they can both live with`,
+      opening: [
+        { speaker: "a", text: t.start[0], gesture: "gestures at the other" },
+        { speaker: "b", text: t.start[1], gesture: "folds their arms" },
+      ],
+      start_tension: 70,
+    };
+  }
+
+  /**
+   * Scripted mediation: listening and even-handed questions cool things down, taking sides or
+   * judging heats them up, and a proposal lands once both feel heard.
+   */
+  async mediationTurn(input: MediationTurnInput, onReply?: (replySoFar: string) => void): Promise<MediationTurnDraft> {
+    const { request } = input;
+    const { scene } = request;
+    const t = SCENE_TEMPLATES.find((x) => x.topic === scene.topic) ?? SCENE_TEMPLATES[0]!;
+    const text = request.playerMessage;
+    const lower = text.toLowerCase();
+    const moves = detectMoves(text, { firstTurn: input.turnNumber === 1 });
+    const [a, b] = scene.parties;
+    const mentions = { a: lower.includes(a.name.toLowerCase().split(" ")[0]!), b: lower.includes(b.name.toLowerCase().split(" ")[0]!) };
+    const sidesWith = /\b(you'?re right|he'?s right|she'?s right|that'?s not fair|you should just|be reasonable|you'?re wrong)\b/i.test(text);
+    const proposes = /\b(what if|how about|could you both|could you each|maybe you|one idea|compromise|take turns|share|split|both of you could)\b/i.test(text);
+    const good = moves.filter((m) => MOVES[m].valence > 0).length;
+    const bad = moves.filter((m) => MOVES[m].valence < 0).length + (sidesWith ? 1 : 0);
+
+    let tensionDelta = clamp(-5 * good + 9 * bad + (proposes ? -6 : 0), -15, 15);
+    if (good === 0 && bad === 0 && !proposes) tensionDelta = 2;
+    const delta = (who: "a" | "b") => clampDelta((good ? 4 : 0) + (mentions[who] ? 3 : 0) - (bad ? 6 : 0) - (sidesWith && !mentions[who] ? 6 : 0));
+    const ra = request.rapport.a + delta("a");
+    const rb = request.rapport.b + delta("b");
+    const tension = request.tension + tensionDelta;
+    const settles = proposes && tension <= 45 && ra >= 40 && rb >= 40;
+    const walks = tension >= 95;
+
+    // Whoever was spoken to answers; otherwise whoever trusts the learner less.
+    const first: "a" | "b" = mentions.b && !mentions.a ? "b" : mentions.a ? "a" : ra <= rb ? "a" : "b";
+    const second: "a" | "b" = first === "a" ? "b" : "a";
+    const say = (who: "a" | "b") => {
+      const side = who === "a" ? t.a : t.b;
+      const trust = who === "a" ? ra : rb;
+      if (settles) return side.warm;
+      if (tension > 65) return side.defensive[input.turnNumber % side.defensive.length]!;
+      return trust >= 55 ? side.opening : side.warm;
+    };
+    const replies: MediationTurnDraft["replies"] = [{ speaker: first, text: say(first), gesture: tension > 65 ? "crosses their arms" : "nods slowly", emotion: tension > 65 ? "guarded" : "warm" }];
+    if (settles) replies.push({ speaker: second, text: `${t.agreement.charAt(0).toUpperCase()}${t.agreement.slice(1, -1)}? Yes. We can try that.`, gesture: "offers a hand", emotion: "warm" });
+    else if (tension <= 55) replies.push({ speaker: second, text: say(second), gesture: "glances at the other", emotion: "curious" });
+    await this.#type(replies[0]!.text, onReply);
+    const thought = (who: "a" | "b") => (bad ? "Whose side is this stranger on?" : good ? `${who === first ? "They actually listened to me." : "At least they're fair."}` : "Hm. Let's see where this goes.");
+    return {
+      replies,
+      perceived_moves: moves,
+      tension_delta: tensionDelta,
+      rapport_a_delta: delta("a"),
+      rapport_b_delta: delta("b"),
+      inner_thought_a: thought("a"),
+      inner_thought_b: thought("b"),
+      state: settles ? "agreement" : walks ? "walked_away" : "ongoing",
+      agreement: settles ? t.agreement : "",
+    };
+  }
+
+  async mediationDebrief(request: MediationDebriefRequest): Promise<DebriefDraft> {
+    const turns = request.transcript.filter((e): e is PlayerTurn => e.speaker === "player");
+    const [a, b] = request.scene.parties;
+    const pos: Record<SkillId, number> = Object.fromEntries(SKILL_IDS.map((s) => [s, 0])) as Record<SkillId, number>;
+    const neg: Record<SkillId, number> = { ...pos };
+    for (const turn of turns) {
+      for (const move of turn.moves ?? []) {
+        const info = MOVES[move];
+        if (!info.skill) continue;
+        if (info.valence > 0) pos[info.skill] += 1;
+        if (info.valence < 0) neg[info.skill] += 1;
+      }
+    }
+    const targeted: SkillId[] = ["listening", "empathy", "common_ground"];
+    const scores = Object.fromEntries(
+      SKILL_IDS.map((s) => (pos[s] === 0 && neg[s] === 0 ? [s, targeted.includes(s) && turns.length > 0 ? 1 : null] : [s, clamp(Math.round(1 + pos[s] - neg[s] * 1.5), 0, 4)])),
+    ) as DebriefDraft["scores"];
+    const evidence: DebriefDraft["evidence"] = [];
+    for (const turn of turns) {
+      const move = (turn.moves ?? []).find((m) => MOVES[m].skill && MOVES[m].valence !== 0);
+      if (!move || evidence.length >= 4) continue;
+      const info = MOVES[move];
+      evidence.push({ skill: info.skill!, quote: turn.text.slice(0, 140), note: `${upperFirst(info.label)} — ${lowerFirst(info.description)}.`, positive: info.valence > 0 });
+    }
+    const growthSkill = [...targeted].sort((x, y) => (scores[x] ?? 0) - (scores[y] ?? 0))[0]!;
+    const original = turns.find((t) => (t.moves ?? []).some((m) => MOVES[m].valence < 0))?.text ?? turns[0]?.text ?? "";
+    const agreed = request.endReason === "agreement";
+    const values = Object.values(scores).filter((v): v is number => typeof v === "number");
+    const mean = values.length ? values.reduce((x, y) => x + y, 0) / values.length : 0;
+    const gap = request.selfRating - 1 - mean;
+    return {
+      headline: agreed ? `You helped ${a.name} and ${b.name} meet in the middle.` : request.endReason === "walked_away" ? "Someone walked off — let's see why." : `A start — ${a.name} and ${b.name} are still at odds.`,
+      summary: `You stepped into a disagreement about ${request.scene.topic}. Tension went from ${request.scene.startTension} to ${Math.round(request.tension)}${agreed && request.agreement ? `, and they agreed: ${lowerFirst(request.agreement)}` : "."}`,
+      scores,
+      evidence,
+      strengths: [pos.listening + pos.empathy > 0 ? "You let each of them feel heard before moving on — that's what lowers the temperature." : "You stayed in the conversation when it was uncomfortable."],
+      growth: {
+        skill: growthSkill,
+        tip: "Ask each person what matters to them underneath their demand; the shared interest is usually hiding there.",
+        original,
+        rewrite: `It sounds like you both want the same street to work — ${a.name}, what would make this fair for you? And ${b.name}?`,
+      },
+      calibration: Math.abs(gap) < 0.75 ? "Your self-rating matched the mentor's view closely." : gap > 0 ? "You rated yourself a bit higher than the evidence shows." : "You were harder on yourself than the evidence suggests.",
+      reflection_question: "When two people you know disagree, do you tend to pick a side, fix it fast, or listen first?",
+      field_mission: { title: "Listen to both sides", description: "Next time two friends or family members disagree, summarise each person's view back to them before offering any idea.", skill: "common_ground" },
+      goal_achieved: agreed,
+      memory: `${request.player.name} stepped in when we were arguing about ${request.scene.topic}${agreed ? " and helped us sort it out" : ""}.`,
+    };
   }
 }

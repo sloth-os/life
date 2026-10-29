@@ -6,6 +6,9 @@ import {
   ExpeditionRequestSchema,
   HintRequestSchema,
   ListenRequestSchema,
+  MediationDebriefRequestSchema,
+  MediationSceneRequestSchema,
+  MediationTurnRequestSchema,
   PersonaRequestSchema,
   PostcardRequestSchema,
   PronounceRequestSchema,
@@ -193,6 +196,31 @@ export function createApp(deps: AppDeps): express.Express {
   api.post("/coach/debrief", rateLimit, async (req, res) => {
     const body = parse(DebriefRequestSchema, req.body);
     await respond(req, res, "debrief", (signal, onEvent) => engine.debrief(body, signal, onEvent));
+  });
+
+  // ── Mediation scenes ────────────────────────────────────────────────────
+  api.post("/mediation/scene", rateLimit, async (req, res) => {
+    const body = parse(MediationSceneRequestSchema, req.body);
+    await respond(req, res, "scene", (signal, onEvent) => engine.createScene(body, signal, onEvent));
+  });
+
+  // Server-sent events: the first reply as it is written, then `result` with everyone's replies.
+  api.post("/mediation/turn", rateLimit, async (req, res) => {
+    const body = parse(MediationTurnRequestSchema, req.body);
+    const signal = abortOnClose(res);
+    const events = openEventStream(res, log, "mediation");
+    try {
+      events.send("result", await engine.mediationTurn(body, (text) => events.send("reply", { text }), signal));
+    } catch (error) {
+      events.fail(error, "Something went wrong mid-conversation. Try sending that again.");
+    } finally {
+      events.close();
+    }
+  });
+
+  api.post("/mediation/debrief", rateLimit, async (req, res) => {
+    const body = parse(MediationDebriefRequestSchema, req.body);
+    await respond(req, res, "debrief", (signal, onEvent) => engine.mediationDebrief(body, signal, onEvent));
   });
 
   // ── Voice mode ──────────────────────────────────────────────────────────

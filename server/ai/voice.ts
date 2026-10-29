@@ -234,9 +234,13 @@ export class VoiceService {
         let text = "";
         for await (const chunk of chunks) text += chunk.choices[0]?.delta?.content ?? "";
         if (signal?.aborted) throw new OpenAI.APIUserAbortError();
-        const parsed = schema.safeParse(coerceToSchema(schema, extractJson(stripThinking(text))));
+        const raw = extractJson(stripThinking(text));
+        const parsed = schema.safeParse(coerceToSchema(schema, raw));
         if (!parsed.success) throw new HttpError(502, "voice_output", "The voice model's answer didn't fit.");
-        this.#opts.log?.(`[voice] ${task} ${this.#opts.model} ${style} total=${Date.now() - started}ms audio=${wavDurationMs(wav)}ms`);
+        // Never the words themselves (they are the player's speech): just enough to see a misfit.
+        const heard = (parsed.data as { transcript?: string }).transcript ?? "";
+        const keys = raw && typeof raw === "object" ? Object.keys(raw).join(",") : typeof raw;
+        this.#opts.log?.(`[voice] ${task} ${this.#opts.model} ${style} total=${Date.now() - started}ms audio=${wavDurationMs(wav)}ms heard=${heard.length} chars keys=${keys}`);
         return parsed.data;
       } catch (error) {
         if (style === "data_uri" && error instanceof OpenAI.BadRequestError) {

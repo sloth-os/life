@@ -9,8 +9,9 @@ import {
   scheduleRecall,
   updateSkill,
 } from "../../shared/rules.ts";
-import type { Delivery, Destination, Expedition, ExpeditionContext, NpcCard, NpcTurn, Persona, PlayerContext } from "../../shared/schemas.ts";
+import type { Debrief, Delivery, Destination, Expedition, ExpeditionContext, NpcCard, NpcTurn, Persona, PlayerContext } from "../../shared/schemas.ts";
 import { SKILL_IDS, skillLevelName } from "../../shared/skills.ts";
+import type { ScenarioId } from "../../shared/world.ts";
 import { ApiError, api, setAccessCode } from "../lib/api.ts";
 import { voiceLine } from "../lib/voice.ts";
 import { store } from "./store.ts";
@@ -394,6 +395,53 @@ export function abandonEncounter(): void {
   go("expedition");
 }
 
+/** XP, skill ratings, calibration, mission and reflection for a finished conversation (a local or a mediation). */
+function recordProgress(
+  st: GameState,
+  input: { debrief: Debrief; selfRating: number; selfNote: string; rapportGained: number; insights: number; scenario?: ScenarioId; who: string; city?: string },
+) {
+  const { debrief, selfRating, selfNote } = input;
+  const xp = encounterXp({ rapportGained: input.rapportGained, insights: input.insights, goalAchieved: debrief.goalAchieved, scores: debrief.scores, reflected: Boolean(selfNote.trim()) });
+  const skills = { ...st.progress.skills };
+  const levelUps: DebriefResult["levelUps"] = [];
+  for (const id of SKILL_IDS) {
+    const before = skills[id];
+    const after = updateSkill(before, debrief.scores[id]);
+    if (skillLevelName(after.rating) !== skillLevelName(before.rating) && after.rating > before.rating) levelUps.push({ skill: id, level: skillLevelName(after.rating) });
+    skills[id] = after;
+  }
+  const rankBefore = rankFor(st.progress.xp).name;
+  const rankAfter = rankFor(st.progress.xp + xp.total).name;
+  const gap = calibrationGap(selfRating, debrief.scores);
+  const mission = debrief.fieldMission;
+  return {
+    xp,
+    levelUps,
+    rankUp: rankAfter !== rankBefore ? rankAfter : undefined,
+    gap,
+    progress: {
+      ...st.progress,
+      xp: st.progress.xp + xp.total,
+      skills,
+      calibration: gap === null ? st.progress.calibration : [...st.progress.calibration, gap].slice(-30),
+      encounters: st.progress.encounters + 1,
+      recentScenarios: input.scenario ? [...st.progress.recentScenarios, input.scenario].slice(-8) : st.progress.recentScenarios,
+      daily: { ...st.progress.daily, [today()]: (st.progress.daily[today()] ?? 0) + 1 },
+    },
+    journal: {
+      ...st.journal,
+      missions:
+        mission.title && !st.journal.missions.some((m) => m.title === mission.title && !m.doneAt)
+          ? [{ id: `m_${Date.now().toString(36)}`, ...mission, createdAt: Date.now() }, ...st.journal.missions]
+          : st.journal.missions,
+      reflections: [
+        { id: `r_${Date.now().toString(36)}`, at: Date.now(), npcName: input.who, city: input.city, selfRating, selfNote: selfNote.trim() || undefined, headline: debrief.headline, question: debrief.reflectionQuestion },
+        ...st.journal.reflections,
+      ],
+    },
+  };
+}
+
 export async function submitReflection(selfRating: number, selfNote: string): Promise<void> {
   const s = store.get();
   const encounter = s.active.encounter;
@@ -416,28 +464,20 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
       if (!enc || enc.id !== encounter.id) return { ...st, ui: { ...st.ui, debriefLoading: false } };
       const key = personKey(enc.expeditionId, enc.npcId);
       const foundThisTime = st.journal.insights.filter((j) => j.key.startsWith(`${key}:`) && j.foundAt >= enc.startedAt).length;
-      const xp = encounterXp({
-        rapportGained: enc.rapport - enc.startRapport,
-        insights: foundThisTime,
-        goalAchieved: debrief.goalAchieved,
-        scores: debrief.scores,
-        reflected: Boolean(selfNote.trim()),
-      });
-      const skills = { ...st.progress.skills };
-      const levelUps: DebriefResult["levelUps"] = [];
-      for (const id of SKILL_IDS) {
-        const before = skills[id];
-        const after = updateSkill(before, debrief.scores[id]);
-        if (skillLevelName(after.rating) !== skillLevelName(before.rating) && after.rating > before.rating) levelUps.push({ skill: id, level: skillLevelName(after.rating) });
-        skills[id] = after;
-      }
-      const rankBefore = rankFor(st.progress.xp).name;
-      const rankAfter = rankFor(st.progress.xp + xp.total).name;
-      const gap = calibrationGap(selfRating, debrief.scores);
       const npc = base.npc;
       const existing = st.people.find((p) => p.key === key);
       const expedition = st.expeditions.find((e) => e.id === enc.expeditionId);
-      const mission = debrief.fieldMission;
+      const recorded = recordProgress(st, {
+        debrief,
+        selfRating,
+        selfNote,
+        rapportGained: enc.rapport - enc.startRapport,
+        insights: foundThisTime,
+        scenario: npc.scenario,
+        who: enc.persona.name,
+        city: expedition?.locality.city,
+      });
+      const { xp, levelUps, rankUp, gap } = recorded;
       const result: DebriefResult = {
         encounterId: enc.id,
         npcId: enc.npcId,
@@ -446,7 +486,7 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
         debrief,
         xp,
         levelUps,
-        rankUp: rankAfter !== rankBefore ? rankAfter : undefined,
+        rankUp,
         selfRating,
         calibrationGap: gap,
         transcript: enc.transcript,
@@ -454,26 +494,8 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
       };
       return {
         ...st,
-        progress: {
-          ...st.progress,
-          xp: st.progress.xp + xp.total,
-          skills,
-          calibration: gap === null ? st.progress.calibration : [...st.progress.calibration, gap].slice(-30),
-          encounters: st.progress.encounters + 1,
-          recentScenarios: [...st.progress.recentScenarios, npc.scenario].slice(-8),
-          daily: { ...st.progress.daily, [today()]: (st.progress.daily[today()] ?? 0) + 1 },
-        },
-        journal: {
-          ...st.journal,
-          missions:
-            mission.title && !st.journal.missions.some((m) => m.title === mission.title && !m.doneAt)
-              ? [{ id: `m_${Date.now().toString(36)}`, ...mission, createdAt: Date.now() }, ...st.journal.missions]
-              : st.journal.missions,
-          reflections: [
-            { id: `r_${Date.now().toString(36)}`, at: Date.now(), npcName: enc.persona.name, city: expedition?.locality.city, selfRating, selfNote: selfNote.trim() || undefined, headline: debrief.headline, question: debrief.reflectionQuestion },
-            ...st.journal.reflections,
-          ],
-        },
+        progress: recorded.progress,
+        journal: recorded.journal,
         people: [
           {
             key,

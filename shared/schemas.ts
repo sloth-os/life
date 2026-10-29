@@ -177,11 +177,15 @@ export const DeliverySchema = z.object({
 });
 export type Delivery = z.infer<typeof DeliverySchema>;
 
+const ReactionSchema = z.object({ thought: text(400), rapportDelta: z.number() });
+
 export const PlayerTurnSchema = z.object({
   speaker: z.literal("player"),
   text: text(PLAYER_MESSAGE_MAX),
   moves: z.array(z.enum(MOVE_IDS)).max(8).optional(),
   delivery: DeliverySchema.optional(),
+  /** Mediation scenes: each party's private reaction to this line. */
+  reactions: z.object({ a: ReactionSchema, b: ReactionSchema }).optional(),
 });
 export const NpcTurnSchema = z.object({
   speaker: z.literal("npc"),
@@ -248,6 +252,96 @@ export const DebriefRequestSchema = z.object({
   selfNote: text(400).optional(),
 });
 export type DebriefRequest = z.infer<typeof DebriefRequestSchema>;
+
+// ── Mediation scenes: two locals at odds, the learner in the middle ────────
+export const PARTY_IDS = ["a", "b"] as const;
+export type PartyId = (typeof PARTY_IDS)[number];
+
+export const PartySchema = z.object({
+  id: z.enum(PARTY_IDS),
+  name: text(60),
+  age: z.number().int().min(10).max(110),
+  role: text(80),
+  pronouns: text(30),
+  /** What they say they want. */
+  position: text(300),
+  /** Why they want it: hidden from the learner, who has to find it out. */
+  interest: text(300),
+  temperament: text(200),
+  hue: z.number().min(0).max(360),
+});
+export type Party = z.infer<typeof PartySchema>;
+
+export const MediationSceneSchema = z.object({
+  id: text(40),
+  title: text(120),
+  placeName: text(120),
+  /** What the learner sees as they arrive. */
+  situation: text(600),
+  topic: text(160),
+  parties: z.tuple([PartySchema, PartySchema]),
+  /** What both actually want: hidden, the way through. */
+  sharedInterest: text(300),
+  goal: text(200),
+  opening: z.array(z.object({ who: z.enum(PARTY_IDS), text: text(400), gesture: text(160) })).min(1).max(3),
+  startTension: z.number().int().min(0).max(100),
+});
+export type MediationScene = z.infer<typeof MediationSceneSchema>;
+
+export const PartyTurnSchema = z.object({
+  speaker: z.literal("party"),
+  who: z.enum(PARTY_IDS),
+  text: text(800),
+  gesture: text(200).optional(),
+  emotion: z.enum(EMOTION_IDS),
+});
+export const MediationEntrySchema = z.discriminatedUnion("speaker", [PlayerTurnSchema, PartyTurnSchema]);
+export type PartyTurn = z.infer<typeof PartyTurnSchema>;
+export type MediationEntry = z.infer<typeof MediationEntrySchema>;
+
+const PartyRapportSchema = z.object({ a: z.number().min(0).max(100), b: z.number().min(0).max(100) });
+
+export const MediationSceneRequestSchema = z.object({ context: ExpeditionContextSchema, player: PlayerSchema });
+export type MediationSceneRequest = z.infer<typeof MediationSceneRequestSchema>;
+
+const MediationBase = {
+  context: ExpeditionContextSchema,
+  scene: MediationSceneSchema,
+  player: PlayerSchema,
+  transcript: z.array(MediationEntrySchema).max(60),
+  tension: z.number().min(0).max(100),
+  rapport: PartyRapportSchema,
+};
+
+export const MediationTurnRequestSchema = z.object({ ...MediationBase, playerMessage: text(PLAYER_MESSAGE_MAX).min(1), playerDelivery: DeliverySchema.optional() });
+export type MediationTurnRequest = z.infer<typeof MediationTurnRequestSchema>;
+
+export const MEDIATION_END_REASONS = ["agreement", "walked_away", "turn_limit", "left"] as const;
+export type MediationEndReason = (typeof MEDIATION_END_REASONS)[number];
+
+export const MediationDebriefRequestSchema = z.object({
+  ...MediationBase,
+  endReason: z.enum(MEDIATION_END_REASONS),
+  agreement: text(400).optional(),
+  selfRating: z.number().int().min(1).max(5),
+  selfNote: text(400).optional(),
+});
+export type MediationDebriefRequest = z.infer<typeof MediationDebriefRequestSchema>;
+
+export interface MediationTurnResult {
+  replies: { who: PartyId; text: string; gesture: string; emotion: EmotionId }[];
+  /** Each party's private reaction to the learner's line (kept for the mentor). */
+  reactions: { a: { thought: string; rapportDelta: number }; b: { thought: string; rapportDelta: number } };
+  moves: MoveId[];
+  tension: number;
+  tensionDelta: number;
+  rapport: { a: number; b: number };
+  ended: boolean;
+  endReason?: Exclude<MediationEndReason, "left">;
+  /** What they agreed, when they did. */
+  agreement?: string;
+  wrapUp: boolean;
+}
 
 /** The learner can ask the mentor this many follow-up questions about one debrief. */
 export const MENTOR_QUESTIONS_MAX = 5;

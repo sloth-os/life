@@ -8,7 +8,7 @@
 // and gates as usual.
 import OpenAI from "openai";
 import { z } from "zod";
-import type { AskRequest, DebriefRequest, HintRequest } from "../../shared/schemas.ts";
+import type { AskRequest, DebriefRequest, HintRequest, MediationDebriefRequest, MediationSceneRequest } from "../../shared/schemas.ts";
 import { detectThinkingStyle, type AiTask, type Effort, type JsonMode, type Thinking, type ThinkingStyle } from "../config.ts";
 import { AiOutputError, AiRefusalError, HttpError } from "../util/errors.ts";
 import { extractPartialString } from "./partialJson.ts";
@@ -30,18 +30,23 @@ import {
 import {
   AskDraftSchema,
   DebriefDraftSchema,
+  MediationTurnDraftSchema,
+  SceneDraftSchema,
   ExpeditionDraftSchema,
   HintDraftSchema,
   NpcTurnDraftSchema,
   PersonaDraftSchema,
   type AskDraft,
   type DebriefDraft,
+  type MediationTurnDraft,
+  type SceneDraft,
   type ExpeditionDraft,
   type HintDraft,
   type NpcTurnDraft,
   type PersonaDraft,
 } from "./schemas.ts";
-import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, NpcTurnInput, OnProgress } from "./types.ts";
+import { GM_SCENE_SYSTEM, MEDIATION_CONSTITUTION, MENTOR_MEDIATION_SYSTEM, buildMediationMessages, renderMediationDebriefInput, renderSceneBlock, renderSceneInput } from "./mediationPrompts.ts";
+import type { ComposeExpeditionInput, CreatePersonaInput, GameAI, MediationTurnInput, NpcTurnInput, OnProgress } from "./types.ts";
 
 const NEXT_MODE: Record<JsonMode, JsonMode | null> = { json_schema: "json_object", json_object: "text", text: null };
 
@@ -375,5 +380,25 @@ export class OpenAIGameAI implements GameAI {
       signal,
       stream: onAnswer ? { field: "answer", onValue: onAnswer } : undefined,
     });
+  }
+
+  createScene(request: MediationSceneRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<SceneDraft> {
+    return this.#run({ task: "scene", schema: SceneDraftSchema, system: GM_SCENE_SYSTEM, messages: [{ role: "user", content: renderSceneInput(request) }], signal, onProgress });
+  }
+
+  mediationTurn(input: MediationTurnInput, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<MediationTurnDraft> {
+    return this.#run({
+      task: "turn",
+      schema: MediationTurnDraftSchema,
+      system: `${MEDIATION_CONSTITUTION}\n\n${renderSceneBlock(input.request)}`,
+      messages: buildMediationMessages(input.request, input.turnNumber, input.wrapUp),
+      signal,
+      // The first reply's text streams while the rest is written.
+      stream: onReply ? { field: "text", onValue: onReply } : undefined,
+    });
+  }
+
+  mediationDebrief(request: MediationDebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft> {
+    return this.#run({ task: "debrief", schema: DebriefDraftSchema, system: MENTOR_MEDIATION_SYSTEM, messages: [{ role: "user", content: renderMediationDebriefInput(request) }], signal, onProgress });
   }
 }

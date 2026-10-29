@@ -76,7 +76,10 @@ test("a real expedition: Google Maps, live grounding, a real model, voice and a 
     await page.getByTestId("mic-btn").click();
     await page.waitForTimeout(7_000);
     await page.getByTestId("mic-btn").click();
-    await expect(page.getByTestId("heard"), "the voice model hears the spoken line").toBeVisible({ timeout: 2 * MINUTE });
+    // Either it heard the line, or a toast says why not.
+    const heard = page.getByTestId("heard");
+    await expect(heard.or(page.locator(".toast")).first()).toBeVisible({ timeout: 2 * MINUTE });
+    if (!(await heard.isVisible())) throw new Error(`the voice model didn't hear the spoken line: ${await page.locator(".toast").first().innerText()}`);
     const message = page.getByRole("textbox", { name: /Your message/ });
     await expect(message).toHaveValue(/first time|enjoy|work/i);
     await snap("heard");
