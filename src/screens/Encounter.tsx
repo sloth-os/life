@@ -264,6 +264,7 @@ function Composer({ encounter }: { encounter: EncounterState }) {
           onKeyDown={onKeyDown}
           placeholder={`Say something to ${firstName}…`}
           aria-label={`Your message to ${firstName}`}
+          enterKeyHint="send"
           disabled={encounter.awaiting}
           autoFocus
         />

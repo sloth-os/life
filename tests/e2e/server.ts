@@ -10,6 +10,7 @@ import { GroundingService } from "../../server/grounding/index.ts";
 import { fakeOpenDataFetch } from "../unit/openDataFetch.ts";
 
 const port = Number(process.env.E2E_PORT ?? 8790);
+const host = process.env.E2E_HOST ?? "127.0.0.1";
 const config = { ...loadConfig({}, []), port };
 const grounding = new GroundingService({ config, fetchImpl: fakeOpenDataFetch(), log: () => {} });
 const engine = new GameEngine({ ai: new DemoGameAI({ typingDelayMs: 4 }), grounding });
@@ -18,4 +19,4 @@ const app = createApp({ config, engine, grounding });
 const dist = path.resolve("dist/client");
 app.use(express.static(dist, { index: false }));
 app.use((req, res, next) => (req.method === "GET" ? res.sendFile(path.join(dist, "index.html")) : next()));
-app.listen(port, "127.0.0.1", () => console.log(`e2e server on http://127.0.0.1:${port}`));
+app.listen(port, host, () => console.log(`e2e server on http://${host}:${port}`));

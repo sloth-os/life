@@ -2330,7 +2330,9 @@ textarea:focus {
 
   .encounter {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 24vh minmax(0, 1fr);
+    /* dvh shrinks while the on-screen keyboard is open (interactive-widget=resizes-content),
+       so the scene gives its room to the conversation. */
+    grid-template-rows: min(24vh, 26dvh) minmax(0, 1fr);
   }
 
   .chat {

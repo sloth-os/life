@@ -1,29 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-
-async function onboard(page: Page, name = "Sam") {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Begin your journey" }).click();
-  await page.getByLabel("Your name").fill(name);
-  await page.getByRole("button", { name: "Next" }).click();
-  await page.getByRole("radio", { name: /Listening/ }).click();
-  await page.getByRole("button", { name: "Next" }).click();
-  await page.getByRole("button", { name: "Open the map" }).click();
-  await expect(page.getByRole("heading", { name: `Where to next, ${name}?` })).toBeVisible();
-}
-
-async function travelToNairobi(page: Page) {
-  await page.locator(".postcard-row", { hasText: "Nairobi" }).click();
-  await expect(page.getByTestId("travel-card")).toContainText("Nairobi");
-  await page.getByRole("button", { name: "Travel here" }).click();
-  await expect(page.getByRole("heading", { name: /Nairobi/ }).first()).toBeVisible();
-  await expect(page.getByText("Say hello in Swahili")).toBeVisible();
-}
-
-async function say(page: Page, text: string) {
-  await page.getByRole("textbox", { name: /Your message/ }).fill(text);
-  await page.getByTestId("send-btn").click();
-  await expect(page.locator(".msg.is-streaming")).toHaveCount(0);
-}
+import { expect, test } from "@playwright/test";
+import { onboard, say, travelToNairobi } from "./helpers.ts";
 
 test("a full expedition: meet a local, talk, reflect, get mentored, review", async ({ page }) => {
   const errors: string[] = [];
@@ -39,7 +15,7 @@ test("a full expedition: meet a local, talk, reflect, get mentored, review", asy
 
   await say(page, "Habari! What are you working on today?");
   await expect(page.locator(".msg--player .move--good").first()).toBeVisible();
-  await say(page, "So you've been here for years — what has changed the most?");
+  await say(page, "So you've been here for years — what has changed the most?", "enter");
   await say(page, "You people must all be poor here");
   await expect(page.locator(".msg--player").last().locator(".move--watch")).toContainText("assumption");
 
@@ -59,7 +35,7 @@ test("a full expedition: meet a local, talk, reflect, get mentored, review", asy
   await expect(debrief.getByText(/Field mission/i)).toBeVisible();
 
   await page.getByTestId("debrief-done").click();
-  await expect(page.getByRole("button", { name: /Visit Wanjiru again|Visit .* again/ }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /Visit .* again/ }).first()).toBeVisible();
 
   await page.getByRole("button", { name: /Journal/ }).click();
   await expect(page.locator(".insight-card").first()).toBeVisible();
@@ -84,14 +60,13 @@ test("progress survives a reload", async ({ page }) => {
   await expect(page.locator(".place-card")).toContainText("Nairobi");
 });
 
-test("the coach and the composer work on a phone-sized screen too", async ({ page }) => {
+test("each local starts a fresh conversation", async ({ page }) => {
   await onboard(page, "Kai");
   await travelToNairobi(page);
   await page.getByTestId("meet-npc-2").click();
   await say(page, "Hi! How is your day going so far?");
   await expect(page.locator(".msg--npc")).toHaveCount(2);
-  const send = page.getByTestId("send-btn");
-  const box = await send.boundingBox();
+  const box = await page.getByTestId("send-btn").boundingBox();
   expect(box).not.toBeNull();
   expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
 });

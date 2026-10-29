@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 24
+
+jobs:
+  build:
+    name: Build & typecheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  unit:
+    name: Unit & integration tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  # The Playwright web server builds the client and serves it with fixture grounding (tests/e2e/server.ts).
+  e2e-desktop:
+    name: End-to-end (desktop)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-desktop
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  # Chromium on a real Android device: redroid (Android 12 in Docker) over ADB, phone and tablet sizes.
+  e2e-mobile:
+    name: End-to-end (mobile, Android)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # The device reaches the test server through the Docker bridge, not loopback.
+      E2E_HOST: 0.0.0.0
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Start Android (redroid)
+        run: ./scripts/start-redroid.sh
+      - run: npm ci
+      - run: npm run test:e2e:mobile
+      - name: Android logs
+        if: failure()
+        run: |
+          adb devices -l || true
+          adb shell wm size || true
+          adb logcat -d -t 400 > "$RUNNER_TEMP/logcat.txt" 2>&1 || true
+          tail -n 120 "$RUNNER_TEMP/logcat.txt" || true
+          docker logs --tail 100 life-redroid || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-mobile
+          path: |
+            playwright-report/
+            test-results/
+            ${{ runner.temp }}/logcat.txt
+          retention-days: 7
+
+  docker:
+    name: Docker image (amd64 + arm64)
+    runs-on: ubuntu-24.04
+    needs: [build, unit, e2e-desktop, e2e-mobile]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      # arm64 is emulated on the amd64 runner; only the per-platform dependency and runtime stages run under QEMU.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=Common Ground
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
