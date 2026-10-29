@@ -84,6 +84,7 @@ const initialUi: UiState = {
   busy: null,
   personaStatus: {},
   hintLoading: false,
+  sceneLoading: false,
   debriefLoading: false,
   debriefProgress: null,
   mentorAsking: null,

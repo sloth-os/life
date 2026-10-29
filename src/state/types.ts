@@ -9,6 +9,9 @@ import type {
   LatLng,
   Hint,
   Insight,
+  MediationEndReason,
+  MediationEntry,
+  MediationScene,
   NpcCard,
   Persona,
   Source,
@@ -18,7 +21,7 @@ import type {
 import type { SkillId } from "../../shared/skills.ts";
 import type { LensId, ScenarioId } from "../../shared/world.ts";
 
-export type Screen = "title" | "onboarding" | "world" | "expedition" | "encounter" | "debrief" | "journal" | "compass" | "settings";
+export type Screen = "title" | "onboarding" | "world" | "expedition" | "encounter" | "mediation" | "debrief" | "journal" | "compass" | "settings";
 
 export interface PlayerProfile {
   name: string;
@@ -134,6 +137,23 @@ export interface EncounterState {
   awaiting: boolean;
 }
 
+/** A mediation scene in progress: two locals at odds, the learner in the middle. */
+export interface MediationState {
+  id: string;
+  expeditionId: string;
+  scene: MediationScene;
+  transcript: MediationEntry[];
+  tension: number;
+  rapport: { a: number; b: number };
+  status: "active" | "ended" | "debriefed";
+  endReason?: MediationEndReason;
+  agreement?: string;
+  startedAt: number;
+  /** The first reply streaming in right now, if any. */
+  streaming: string | null;
+  awaiting: boolean;
+}
+
 export interface DebriefResult {
   encounterId: string;
   npcId: string;
@@ -165,6 +185,8 @@ export interface SaveData {
     expeditionId: string | null;
     personas: Record<string, Persona>;
     encounter: EncounterState | null;
+    /** Absent in saves from before mediation scenes. */
+    mediation?: MediationState | null;
     debrief: DebriefResult | null;
   };
 }
@@ -185,6 +207,7 @@ export interface UiState {
   busy: { kind: "expedition"; label: string; destination: LatLng; startedAt: number; progress: StreamProgress | null; briefing: ExpeditionBriefing | null } | null;
   personaStatus: Record<string, "loading" | "ready" | "error">;
   hintLoading: boolean;
+  sceneLoading: boolean;
   debriefLoading: boolean;
   debriefProgress: StreamProgress | null;
   /** A question to the mentor whose answer is streaming in. */

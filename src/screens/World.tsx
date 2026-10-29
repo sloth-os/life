@@ -11,7 +11,7 @@ import { canSpeak, speak } from "../lib/speech.ts";
 import { startFlyIn, type FlyIn } from "../map/flyin.ts";
 import { useMap } from "../map/index.ts";
 import type { MapMarker } from "../map/types.ts";
-import { currentExpedition, ensurePersona, go, meet, personKey, startExpedition, surpriseDestination, toast } from "../state/actions.ts";
+import { currentExpedition, ensurePersona, go, meet, personKey, startExpedition, startMediation, surpriseDestination, toast } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 
 const CONTINENTS: Postcard["continent"][] = ["Africa", "Asia", "Europe", "North America", "South America", "Oceania"];
@@ -349,6 +349,21 @@ export function ExpeditionScreen() {
                 );
               })}
             </ul>
+          </section>
+
+          <section className="card mediation-card" aria-labelledby="mediation-title">
+            <p className="eyebrow">Challenge · mediation</p>
+            <h3 id="mediation-title">⚖️ Two locals at odds</h3>
+            <p className="muted small">Step into a disagreement and help two people find common ground: listen to both, stay fair, look for what they both want.</p>
+            {(() => {
+              const m = game.active.mediation;
+              const resumable = m && m.expeditionId === expedition.id && m.status !== "debriefed";
+              return (
+                <button type="button" className="btn" onClick={() => void startMediation()} disabled={game.ui.sceneLoading} data-testid="start-mediation">
+                  {game.ui.sceneLoading ? <Spinner label="Finding them…" /> : resumable ? "Back to the disagreement" : "Step in"}
+                </button>
+              );
+            })()}
           </section>
 
           <p className="notice small">

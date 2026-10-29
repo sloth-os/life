@@ -733,7 +733,7 @@ export class DemoGameAI implements GameAI {
       return trust >= 55 ? side.opening : side.warm;
     };
     const replies: MediationTurnDraft["replies"] = [{ speaker: first, text: say(first), gesture: tension > 65 ? "crosses their arms" : "nods slowly", emotion: tension > 65 ? "guarded" : "warm" }];
-    if (settles) replies.push({ speaker: second, text: `${t.agreement.charAt(0).toUpperCase()}${t.agreement.slice(1, -1)}? Yes. We can try that.`, gesture: "offers a hand", emotion: "warm" });
+    if (settles) replies.push({ speaker: second, text: t.accept, gesture: "offers a hand", emotion: "warm" });
     else if (tension <= 55) replies.push({ speaker: second, text: say(second), gesture: "glances at the other", emotion: "curious" });
     await this.#type(replies[0]!.text, onReply);
     const thought = (who: "a" | "b") => (bad ? "Whose side is this stranger on?" : good ? `${who === first ? "They actually listened to me." : "At least they're fair."}` : "Hm. Let's see where this goes.");

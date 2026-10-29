@@ -2405,6 +2405,27 @@ textarea:focus {
     border-top: 1px solid var(--line);
   }
 
+  /* Mediation on a phone: the two parties side by side, the tension, little else. */
+  .mediation__scene {
+    padding: 10px 14px;
+    gap: 6px;
+  }
+
+  .mediation__scene > .scene,
+  .mediation__scene > .muted,
+  .mediation__scene > h2,
+  .party__position {
+    display: none;
+  }
+
+  .parties {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .party {
+    padding: 8px;
+  }
+
   .chat__head {
     padding: 8px 14px;
   }
@@ -2598,4 +2619,94 @@ textarea:focus {
 .ask-form input {
   flex: 1;
   min-width: 0;
+}
+
+/* Mediation scenes */
+.mediation-card {
+  margin-top: 16px;
+  border-left: 5px solid var(--accent-2);
+}
+
+.mediation-card h3 {
+  margin: 4px 0;
+}
+
+.mediation__scene {
+  overflow-y: auto;
+  padding: 20px;
+  background: var(--surface-2);
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.mediation__scene h2 {
+  margin: 0;
+  font-family: var(--font-display);
+}
+
+.parties {
+  display: grid;
+  gap: 10px;
+}
+
+.party {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid hsl(var(--party-hue) 55% 50%);
+}
+
+.party h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.party p {
+  margin: 2px 0;
+}
+
+.party__position {
+  font-style: italic;
+}
+
+.party__trust {
+  margin-top: 6px;
+}
+
+.tension {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  align-items: center;
+}
+
+.tension__track {
+  grid-column: 1 / -1;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4caf7d, #e0b341 45%, #d9573b);
+  position: relative;
+  overflow: hidden;
+}
+
+.tension__fill {
+  height: 100%;
+  border-right: 3px solid var(--ink);
+  background: transparent;
+  transition: width 0.4s ease;
+}
+
+.msg__name {
+  margin: 0 0 2px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.msg--party-b .bubble {
+  background: color-mix(in srgb, var(--accent-2) 14%, var(--surface-2));
 }

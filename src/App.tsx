@@ -9,6 +9,7 @@ import { DebriefScreen } from "./screens/Debrief.tsx";
 import { EncounterScreen } from "./screens/Encounter.tsx";
 import { AccessGate, OnboardingScreen, TitleScreen } from "./screens/Intro.tsx";
 import { JournalScreen } from "./screens/Journal.tsx";
+import { MediationScreen } from "./screens/Mediation.tsx";
 import { ArrivingScreen, ExpeditionScreen, ScoutingOverlay, WorldScreen } from "./screens/World.tsx";
 import { currentExpedition, go, loadConfig } from "./state/actions.ts";
 import { useGame } from "./state/store.ts";
@@ -96,7 +97,7 @@ function TopBar() {
   const game = useGame();
   const rank = rankFor(game.progress.xp);
   const progress = rank.next ? (game.progress.xp - rank.floor) / (rank.next - rank.floor) : 1;
-  const active = game.ui.screen === "expedition" || game.ui.screen === "encounter" || game.ui.screen === "debrief" ? "world" : game.ui.screen;
+  const active = game.ui.screen === "expedition" || game.ui.screen === "encounter" || game.ui.screen === "mediation" || game.ui.screen === "debrief" ? "world" : game.ui.screen;
   const due = game.journal.insights.filter((j) => j.recall.dueAt <= Date.now()).length;
   return (
     <header className="topbar">
@@ -183,6 +184,7 @@ export function App() {
           {inGame && screen === "world" ? <WorldScreen /> : null}
           {inGame && screen === "expedition" ? game.ui.busy?.briefing ? <ArrivingScreen /> : <ExpeditionScreen /> : null}
           {inGame && screen === "encounter" ? <EncounterScreen /> : null}
+          {inGame && screen === "mediation" ? <MediationScreen /> : null}
           {inGame && screen === "debrief" ? <DebriefScreen /> : null}
           {inGame && screen === "journal" ? <JournalScreen /> : null}
           {inGame && screen === "compass" ? <CompassScreen /> : null}

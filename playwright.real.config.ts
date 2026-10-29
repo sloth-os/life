@@ -6,7 +6,8 @@ const port = 8791;
  * Speech CI synthesizes with espeak-ng; Chromium plays it as the microphone (a beep if it's
  * missing), on a loop: without one, only the first recording in the browser hears it.
  */
-const microphone = resolve("test-results/real/voice-input.wav");
+// Outside outputDir, which Playwright empties when a run starts.
+const microphone = resolve("test-results/speech/voice-input.wav");
 
 /**
  * The real-services suite: Google Maps in the browser, live grounding and a real model, with

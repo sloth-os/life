@@ -120,3 +120,43 @@ test("a real expedition: Google Maps, live grounding, a real model, voice and a 
 
   expect(pageErrors, "no uncaught errors in the page").toEqual([]);
 });
+
+test("a real mediation: two locals at odds, played by the real model", async ({ page }, testInfo) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const snap = async (name: string) => testInfo.attach(name, { body: await page.screenshot(), contentType: "image/png" });
+
+  await onboard(page, "Kit");
+  await page.locator(".postcard-row", { hasText: "Lisbon" }).click();
+  await page.getByRole("button", { name: "Travel here" }).click();
+  await expect(page.locator(".local-card:not(.local-card--pending)").first(), "the model composes the expedition").toBeVisible({ timeout: COMPOSE_TIMEOUT });
+
+  await page.getByTestId("start-mediation").click();
+  const mediation = page.getByTestId("mediation");
+  await expect(mediation, "the model sets up the disagreement").toBeVisible({ timeout: COMPOSE_TIMEOUT });
+  await expect(mediation.locator(".party")).toHaveCount(2);
+  await snap("mediation");
+
+  const settled = page.getByText(/agreed:/);
+  const over = page.getByTestId("rate-4");
+  for (const line of [
+    "Hi, sorry to step in. I can hear you're both frustrated. Could each of you tell me what matters most to you here?",
+    "Thank you. So it sounds like you both care about this place working — just in different ways. Is that right?",
+    "What if we looked for something that protects what each of you needs? What could that look like?",
+  ]) {
+    if (await over.isVisible()) break;
+    await say(page, line);
+  }
+  await snap("mediation conversation");
+  if (await settled.isVisible()) await testInfo.attach("outcome", { body: await settled.innerText(), contentType: "text/plain" });
+  const end = page.getByRole("button", { name: "End conversation" });
+  await expect(over.or(end)).toBeVisible();
+  if (await end.isVisible()) await end.click();
+  await over.click();
+  await page.getByTestId("get-feedback").click();
+  const debrief = page.getByTestId("debrief");
+  await expect(debrief, "the model debriefs the mediation").toBeVisible({ timeout: COMPOSE_TIMEOUT });
+  await expect(debrief.getByRole("heading", { level: 1 })).not.toBeEmpty();
+  await snap("mediation debrief");
+  expect(pageErrors, "no uncaught errors in the page").toEqual([]);
+});

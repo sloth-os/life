@@ -73,7 +73,7 @@ async function probeText(): Promise<void> {
 }
 
 /** Speech clips CI synthesizes with espeak-ng (see the workflow); the probe skips what's missing. */
-const SPEECH = { line: "test-results/real/voice-input.wav", phrase: "test-results/real/pronounce-es.wav" };
+const SPEECH = { line: "test-results/speech/voice-input.wav", phrase: "test-results/speech/pronounce-es.wav" };
 const SPOKEN_LINE = "Hello! It's my first time here. What do you enjoy most about your work?";
 
 async function probeVoice(): Promise<void> {

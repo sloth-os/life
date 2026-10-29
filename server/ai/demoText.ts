@@ -196,6 +196,8 @@ export interface SceneTemplate {
   b: SceneSide;
   start: [string, string];
   agreement: string;
+  /** How the second one accepts, in their own words. */
+  accept: string;
 }
 
 export const SCENE_TEMPLATES: SceneTemplate[] = [
@@ -225,6 +227,7 @@ export const SCENE_TEMPLATES: SceneTemplate[] = [
     },
     start: ["Those tables have been there for years! Nobody complained before.", "Because nobody could get through to complain! I had to walk in the road again."],
     agreement: "The café keeps its tables but leaves a clear lane by the wall, and moves two of them in after six.",
+    accept: "A clear lane by the wall, and two tables in after six? All right. I can live with that.",
   },
   {
     title: "Practice after dark",
@@ -252,6 +255,7 @@ export const SCENE_TEMPLATES: SceneTemplate[] = [
     },
     start: ["We stop at eleven! That's the rule.", "And I get up at four! Whose rule covers that?"],
     agreement: "The band practises on the two evenings the bakery is closed the next morning, and stops at nine on other nights.",
+    accept: "Loud on my two days off, quiet by nine the rest? Deal. And come and buy bread for the gig.",
   },
   {
     title: "The shady spot",
@@ -279,5 +283,6 @@ export const SCENE_TEMPLATES: SceneTemplate[] = [
     },
     start: ["Move your table, this is my spot!", "It's nobody's spot. It's the only shade there is!"],
     agreement: "They put up a shared awning between the two stalls and split its cost.",
+    accept: "One awning over both stalls, and we split the cost? Yes. We can try that.",
   },
 ];

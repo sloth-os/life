@@ -2,6 +2,7 @@
 import { POSTCARDS } from "../../shared/destinations.ts";
 import {
   HINTS_PER_ENCOUNTER,
+  MEDIATION_STARTING_RAPPORT,
   calibrationGap,
   encounterXp,
   initialSkillProfile,
@@ -9,13 +10,13 @@ import {
   scheduleRecall,
   updateSkill,
 } from "../../shared/rules.ts";
-import type { Debrief, Delivery, Destination, Expedition, ExpeditionContext, NpcCard, NpcTurn, Persona, PlayerContext } from "../../shared/schemas.ts";
+import type { Debrief, Delivery, Destination, Expedition, ExpeditionContext, MediationScene, NpcCard, NpcTurn, PartyId, Persona, PlayerContext, PlayerTurn, TranscriptEntry } from "../../shared/schemas.ts";
 import { SKILL_IDS, skillLevelName } from "../../shared/skills.ts";
 import type { ScenarioId } from "../../shared/world.ts";
 import { ApiError, api, setAccessCode } from "../lib/api.ts";
 import { voiceLine } from "../lib/voice.ts";
 import { store } from "./store.ts";
-import type { DebriefResult, EncounterState, GameState, PlayerProfile, Screen, Settings, Toast } from "./types.ts";
+import type { DebriefResult, EncounterState, GameState, MediationState, PlayerProfile, Screen, Settings, Toast } from "./types.ts";
 
 // ── Small helpers ────────────────────────────────────────────────────────
 let toastSeq = 0;
@@ -377,11 +378,205 @@ export async function requestHint(): Promise<void> {
   }
 }
 
+// ── Mediation scenes ─────────────────────────────────────────────────────
+let mediationAbort: AbortController | null = null;
+
+function patchMediation(fn: (m: MediationState) => MediationState): void {
+  store.set((s) => (s.active.mediation ? { ...s, active: { ...s.active, mediation: fn(s.active.mediation) } } : s));
+}
+
+/** Step into a disagreement between two locals of the current expedition (or back into an unfinished one). */
+export async function startMediation(): Promise<void> {
+  const s = store.get();
+  const expedition = currentExpedition(s);
+  if (!expedition || !s.player || s.ui.sceneLoading) return;
+  const existing = s.active.mediation;
+  if (existing && existing.expeditionId === expedition.id && existing.status !== "debriefed") {
+    go("mediation");
+    return;
+  }
+  store.ui({ sceneLoading: true });
+  try {
+    const scene = await api.mediationScene({ context: contextOf(expedition), player: playerContext(s) });
+    const mediation: MediationState = {
+      id: scene.id,
+      expeditionId: expedition.id,
+      scene,
+      transcript: [],
+      tension: scene.startTension,
+      rapport: { a: MEDIATION_STARTING_RAPPORT, b: MEDIATION_STARTING_RAPPORT },
+      status: "active",
+      startedAt: Date.now(),
+      streaming: null,
+      awaiting: false,
+    };
+    store.set((st) => ({ ...st, active: { ...st.active, mediation, debrief: null }, ui: { ...st.ui, sceneLoading: false, screen: "mediation" } }));
+    const last = scene.opening.at(-1)!;
+    sayAloud(last.text, partyOf(scene, last.who), expedition.id, `${scene.id}:${last.who}`);
+  } catch (error) {
+    store.ui({ sceneLoading: false });
+    toast("error", "Couldn't find the scene", message(error));
+  }
+}
+
+const partyOf = (scene: MediationScene, who: PartyId) => scene.parties[who === "a" ? 0 : 1];
+
+export async function sendMediationMessage(text: string, delivery?: Delivery): Promise<boolean> {
+  const s = store.get();
+  const mediation = s.active.mediation;
+  const line = text.trim();
+  if (!mediation || mediation.status !== "active" || mediation.awaiting || !line) return false;
+  const expedition = s.expeditions.find((e) => e.id === mediation.expeditionId);
+  if (!expedition) return false;
+  const request = {
+    context: contextOf(expedition),
+    scene: mediation.scene,
+    player: playerContext(s),
+    transcript: mediation.transcript,
+    tension: mediation.tension,
+    rapport: mediation.rapport,
+    playerMessage: line,
+    playerDelivery: delivery,
+  };
+  patchMediation((m) => ({ ...m, transcript: [...m.transcript, { speaker: "player", text: line, delivery }], awaiting: true, streaming: "" }));
+  mediationAbort = new AbortController();
+  try {
+    const result = await api.mediationTurn(request, (reply) => patchMediation((m) => ({ ...m, streaming: reply })), mediationAbort.signal);
+    patchMediation((m) => {
+      const transcript = [...m.transcript];
+      const last = transcript.at(-1);
+      if (last?.speaker === "player") transcript[transcript.length - 1] = { ...last, moves: result.moves, reactions: result.reactions };
+      for (const reply of result.replies) transcript.push({ speaker: "party", who: reply.who, text: reply.text, gesture: reply.gesture || undefined, emotion: reply.emotion });
+      return {
+        ...m,
+        transcript,
+        tension: result.tension,
+        rapport: result.rapport,
+        awaiting: false,
+        streaming: null,
+        status: result.ended ? "ended" : "active",
+        endReason: result.endReason,
+        agreement: result.agreement,
+      };
+    });
+    const first = result.replies[0]!;
+    sayAloud(first.text, partyOf(mediation.scene, first.who), mediation.expeditionId, `${mediation.scene.id}:${first.who}`);
+    return true;
+  } catch (error) {
+    patchMediation((m) => ({ ...m, transcript: m.transcript.at(-1)?.speaker === "player" ? m.transcript.slice(0, -1) : m.transcript, awaiting: false, streaming: null }));
+    if (!isAbort(error)) toast("error", "Message not delivered", message(error));
+    return false;
+  } finally {
+    mediationAbort = null;
+  }
+}
+
+export function leaveMediation(): void {
+  mediationAbort?.abort();
+  patchMediation((m) => (m.status === "active" ? { ...m, status: "ended", endReason: "left", awaiting: false, streaming: null } : m));
+}
+
+export function abandonMediation(): void {
+  mediationAbort?.abort();
+  store.set((s) => ({ ...s, active: { ...s.active, mediation: null } }));
+  go("expedition");
+}
+
+/** The mediation as the debrief screen shows it: each party's lines labelled, with their private reactions. */
+function mediationTranscript(m: MediationState): TranscriptEntry[] {
+  const out: TranscriptEntry[] = [];
+  let reactions: PlayerTurn["reactions"];
+  for (const entry of m.transcript) {
+    if (entry.speaker === "player") {
+      reactions = entry.reactions;
+      out.push(entry);
+      continue;
+    }
+    const party = partyOf(m.scene, entry.who);
+    const reaction = reactions?.[entry.who];
+    out.push({
+      speaker: "npc",
+      text: `${party.name}: ${entry.text}`,
+      gesture: entry.gesture,
+      emotion: entry.emotion,
+      rapportDelta: reaction?.rapportDelta ?? 0,
+      rapportAfter: entry.who === "a" ? m.rapport.a : m.rapport.b,
+      innerThought: reaction?.thought,
+      revealedInsightIds: [],
+    });
+    reactions = undefined;
+  }
+  return out;
+}
+
+export async function submitMediationReflection(selfRating: number, selfNote: string): Promise<void> {
+  const s = store.get();
+  const mediation = s.active.mediation;
+  const expedition = mediation ? s.expeditions.find((e) => e.id === mediation.expeditionId) : undefined;
+  if (!mediation || !expedition || mediation.status !== "ended" || s.ui.debriefLoading) return;
+  store.ui({ debriefLoading: true, debriefProgress: null });
+  try {
+    const debrief = await api.mediationDebrief(
+      {
+        context: contextOf(expedition),
+        scene: mediation.scene,
+        player: playerContext(s),
+        transcript: mediation.transcript,
+        tension: mediation.tension,
+        rapport: mediation.rapport,
+        endReason: mediation.endReason ?? "left",
+        agreement: mediation.agreement,
+        selfRating,
+        selfNote: selfNote.trim() || undefined,
+      },
+      { onProgress: (debriefProgress) => store.ui({ debriefProgress }) },
+    );
+    store.set((st) => {
+      const m = st.active.mediation;
+      if (!m || m.id !== mediation.id) return { ...st, ui: { ...st.ui, debriefLoading: false } };
+      const [a, b] = m.scene.parties;
+      const recorded = recordProgress(st, {
+        debrief,
+        selfRating,
+        selfNote,
+        rapportGained: (m.rapport.a + m.rapport.b) / 2 - MEDIATION_STARTING_RAPPORT,
+        insights: 0,
+        who: `${a.name} & ${b.name}`,
+        city: expedition.locality.city,
+      });
+      const result: DebriefResult = {
+        encounterId: m.id,
+        npcId: "mediation",
+        npcName: `${a.name} & ${b.name}`,
+        placeName: m.scene.placeName,
+        debrief,
+        xp: recorded.xp,
+        levelUps: recorded.levelUps,
+        rankUp: recorded.rankUp,
+        selfRating,
+        calibrationGap: recorded.gap,
+        transcript: mediationTranscript(m),
+        insights: [],
+      };
+      return {
+        ...st,
+        progress: recorded.progress,
+        journal: recorded.journal,
+        active: { ...st.active, mediation: { ...m, status: "debriefed" }, debrief: result },
+        ui: { ...st.ui, debriefLoading: false, screen: "debrief" },
+      };
+    });
+  } catch (error) {
+    store.ui({ debriefLoading: false });
+    toast("error", "The mentor couldn't review this one", message(error));
+  }
+}
+
 /** A local's line, aloud when the player has voices on. */
-function sayAloud(text: string, persona: Persona, expeditionId: string, npcId: string): void {
+function sayAloud(text: string, speaker: { pronouns: string }, expeditionId: string, voiceId: string): void {
   const s = store.get();
   if (!s.settings.voiceOutput) return;
-  void voiceLine(text, { pronouns: persona.pronouns, seed: `${expeditionId}:${npcId}` }, s.ui.config?.features.voiceOutput === "model");
+  void voiceLine(text, { pronouns: speaker.pronouns, seed: `${expeditionId}:${voiceId}` }, s.ui.config?.features.voiceOutput === "model");
 }
 
 export function leaveEncounter(): void {
