@@ -81,7 +81,7 @@ for (const profile of PROFILES) {
       await expect(page.getByTestId("debrief").locator(".evidence--watch")).toContainText("You people must all be poor here");
       expect(await fitsViewportWidth(page), "debrief fits the screen width").toBe(true);
 
-      await page.getByRole("button", { name: "Journal" }).tap();
+      await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: /^Journal/ }).tap();
       await expect(page.locator(".insight-card").first()).toBeVisible();
 
       expect(pageErrors, "no uncaught errors in the page").toEqual([]);
