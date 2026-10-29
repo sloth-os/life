@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from "react";
 import { AGREEMENT_TENSION_MAX, MEDIATION_TURN_SOFT_CAP, PLAYER_MESSAGE_MAX } from "../../shared/rules.ts";
 import type { MediationScene, Party, PartyId } from "../../shared/schemas.ts";
-import { DeliveryChip, MicButton, ReflectionForm, VoiceStatus, useVoiceInput } from "../components/conversation.tsx";
+import { DeliveryChip, MicButton, ReflectionForm, VoiceStatus, isSendKey, useVoiceInput } from "../components/conversation.tsx";
 import { Avatar, EmotionChip, MoveChips } from "../components/ui.tsx";
 import { abandonMediation, leaveMediation, sendMediationMessage, submitMediationReflection } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
@@ -133,7 +133,7 @@ function Composer({ mediation }: { mediation: MediationState }) {
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (isSendKey(event)) {
       event.preventDefault();
       void submit();
     }

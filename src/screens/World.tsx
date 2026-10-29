@@ -326,7 +326,7 @@ export function ExpeditionScreen() {
                     <p className="local-card__hook">“{npc.hook}”</p>
                     {npc.walk ? (
                       <p className="muted small" title={t("expedition.walkSource")}>
-                        🚶 {t("expedition.walk", { minutes: npc.walk.minutes })}
+                        🚶 {t("expedition.walk", { minutes: npc.walk.minutes })} · <span translate="no">Google Maps</span>
                       </p>
                     ) : null}
                     <p className="tags">

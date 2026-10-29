@@ -3,7 +3,7 @@ import { HINTS_PER_ENCOUNTER, PLAYER_MESSAGE_MAX, TURN_SOFT_CAP } from "../../sh
 import type { AppConfig, Expedition, NpcCard } from "../../shared/schemas.ts";
 import { SKILLS } from "../../shared/skills.ts";
 import { LENSES, SCENARIOS, type EmotionId } from "../../shared/world.ts";
-import { DeliveryChip, MicButton, ReflectionForm, VoiceStatus, useVoiceInput } from "../components/conversation.tsx";
+import { DeliveryChip, MicButton, ReflectionForm, VoiceStatus, isSendKey, useVoiceInput } from "../components/conversation.tsx";
 import { Avatar, EmotionChip, LensTag, MoveChips, RapportMeter, Spinner } from "../components/ui.tsx";
 import { canListen, listen } from "../lib/speech.ts";
 import { createSceneView } from "../map/index.ts";
@@ -237,7 +237,7 @@ function Composer({ encounter }: { encounter: EncounterState }) {
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (isSendKey(event)) {
       event.preventDefault();
       void submit();
     }

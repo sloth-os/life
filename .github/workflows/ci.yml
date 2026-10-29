@@ -86,6 +86,9 @@ jobs:
       - run: npm run test:e2e:mobile
       - name: Android logs
         if: failure()
+        env:
+          # adb also lists the device under a second name; pick redroid's.
+          ANDROID_SERIAL: 127.0.0.1:5555
         run: |
           adb devices -l || true
           adb shell wm size || true

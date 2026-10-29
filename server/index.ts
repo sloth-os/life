@@ -47,7 +47,13 @@ const voice = config.voice
   ? new VoiceService({ client: new OpenAI({ apiKey: config.voice.apiKey ?? "not-needed", baseURL: config.voice.baseUrl, maxRetries: 1 }), model: config.voice.model, voices: config.voice.voices, log })
   : undefined;
 const images = config.images ? new ImageGateway({ config: config.images, log }) : undefined;
-const classroom = config.classroom ? await ClassroomStore.open(config.dataDir) : undefined;
+// Classroom mode needs somewhere to write; without it the game runs, just without classes.
+const classroom = config.classroom
+  ? await ClassroomStore.open(config.dataDir).catch((error: unknown) => {
+      log(`[classroom] off: can't use ${config.dataDir} (${error instanceof Error ? error.message : String(error)})`);
+      return undefined;
+    })
+  : undefined;
 const engine = new GameEngine({ ai, grounding });
 const app = createApp({ config, engine, grounding, voice, images, classroom, log });
 

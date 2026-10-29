@@ -1,7 +1,7 @@
 // Pieces shared by the two kinds of conversation (a local, or a mediation between two):
 // speaking a message through the voice model, how a spoken line sounded, and the reflection
 // before the mentor's feedback.
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties, type KeyboardEvent } from "react";
 import type { Delivery, Heard } from "../../shared/schemas.ts";
 import { api } from "../lib/api.ts";
 import { canRecord, startRecording, type Recording } from "../lib/recorder.ts";
@@ -9,6 +9,15 @@ import { message, toast } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 import { Spinner, formatElapsed, useElapsed } from "./ui.tsx";
 import { t, type MessageKey } from "../i18n/index.ts";
+
+/**
+ * Enter sends and Shift+Enter starts a new line. An Enter the input method is still using, to pick
+ * Chinese characters for example, doesn't send: `isComposing`, or keyCode 229, which Safari
+ * reports for the Enter that confirms a candidate.
+ */
+export function isSendKey(event: KeyboardEvent<HTMLTextAreaElement>) {
+  return event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229;
+}
 
 export const TONE_ICONS: Record<Delivery["tone"], string> = { warm: "🤗", friendly: "🙂", neutral: "😐", hesitant: "🤔", tense: "😬", flat: "😶", impatient: "⏩" };
 
