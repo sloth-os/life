@@ -93,19 +93,30 @@ let state: GameState = { ...loadSave(), ui: initialUi };
 const listeners = new Set<Listener>();
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+function persist(): void {
+  clearTimeout(saveTimer);
+  saveTimer = undefined;
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(toSave(state)));
+  } catch {
+    // Storage can be full or blocked (private mode); the game still works this session.
+  }
+}
+
+// Saves are debounced; flush a pending one when the page is hidden or unloaded, so a quick
+// reload, a closed tab or a phone discarding a background tab never loses progress.
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => saveTimer && persist());
+  document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && saveTimer && persist());
+}
+
 export const store = {
   get: (): GameState => state,
   set(update: (s: GameState) => GameState): void {
     state = update(state);
     for (const l of listeners) l();
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      try {
-        localStorage.setItem(SAVE_KEY, JSON.stringify(toSave(state)));
-      } catch {
-        // Storage can be full or blocked (private mode); the game still works this session.
-      }
-    }, 250);
+    saveTimer = setTimeout(persist, 250);
   },
   ui(patch: Partial<UiState>): void {
     store.set((s) => ({ ...s, ui: { ...s.ui, ...patch } }));

@@ -51,7 +51,7 @@ for (const profile of PROFILES) {
       expect(viewport.width, "the CSS viewport should match the profile").toBeGreaterThanOrEqual(profile.width * 0.9);
       expect(viewport.width).toBeLessThanOrEqual(profile.width * 1.1);
 
-      await onboard(page, "Ana");
+      await onboard(page, "Ana", "enter");
       expect(await fitsViewportWidth(page), "world screen fits the screen width").toBe(true);
 
       // Phones get a bottom sheet over the map; tablets keep the side panel.
@@ -65,13 +65,13 @@ for (const profile of PROFILES) {
       await expect(page.getByRole("meter", { name: /Rapport/ })).toBeVisible();
       expect(await bottomOf(page, "send-btn"), "the send button is reachable without scrolling").toBeLessThanOrEqual(viewport.height + 1);
 
-      await say(page, "Habari! What are you working on today?");
-      await say(page, "You people must all be poor here");
+      await say(page, "Habari! What are you working on today?", "enter");
+      await say(page, "You people must all be poor here", "enter");
       await expect(page.locator(".msg--player").last().locator(".move--watch")).toContainText("assumption");
       await page.getByTestId("coach-btn").tap();
       await expect(page.locator(".coach__hint")).toBeVisible();
-      await say(page, "That sounds hard. How are you holding up?");
-      await say(page, "Thank you for sharing. Take care, goodbye!");
+      await say(page, "That sounds hard. How are you holding up?", "enter");
+      await say(page, "Thank you for sharing. Take care, goodbye!", "enter");
       await expect(page.getByText("You said goodbye.")).toBeVisible();
       expect(await fitsViewportWidth(page), "encounter fits the screen width").toBe(true);
 

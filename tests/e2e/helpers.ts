@@ -1,11 +1,19 @@
 // Player actions shared by the desktop and Android journeys.
 import { expect, type Page } from "@playwright/test";
 
-export async function onboard(page: Page, name = "Sam") {
+/**
+ * How a text entry is submitted. On a real phone the on-screen keyboard can cover or shift
+ * buttons, so mobile journeys submit with Enter, as people do with the keyboard's send key.
+ */
+export type Submit = "click" | "enter";
+
+export async function onboard(page: Page, name = "Sam", submit: Submit = "click") {
   await page.goto("/");
   await page.getByRole("button", { name: "Begin your journey" }).click();
-  await page.getByLabel("Your name").fill(name);
-  await page.getByRole("button", { name: "Next" }).click();
+  const nameField = page.getByLabel("Your name");
+  await nameField.fill(name);
+  if (submit === "enter") await nameField.press("Enter");
+  else await page.getByRole("button", { name: "Next" }).click();
   await page.getByRole("radio", { name: /Listening/ }).click();
   await page.getByRole("button", { name: "Next" }).click();
   await page.getByRole("button", { name: "Open the map" }).click();
@@ -20,9 +28,12 @@ export async function travelToNairobi(page: Page) {
   await expect(page.getByText("Say hello in Swahili")).toBeVisible();
 }
 
-export async function say(page: Page, text: string) {
-  await page.getByRole("textbox", { name: /Your message/ }).fill(text);
-  await page.getByTestId("send-btn").click();
+export async function say(page: Page, text: string, submit: Submit = "click") {
+  const message = page.getByRole("textbox", { name: /Your message/ });
+  await message.fill(text);
+  if (submit === "enter") await message.press("Enter");
+  else await page.getByTestId("send-btn").click();
+  await expect(page.locator(".msg--player").last()).toContainText(text);
   await expect(page.locator(".msg.is-streaming")).toHaveCount(0);
 }
 

@@ -15,7 +15,7 @@ test("a full expedition: meet a local, talk, reflect, get mentored, review", asy
 
   await say(page, "Habari! What are you working on today?");
   await expect(page.locator(".msg--player .move--good").first()).toBeVisible();
-  await say(page, "So you've been here for years — what has changed the most?");
+  await say(page, "So you've been here for years — what has changed the most?", "enter");
   await say(page, "You people must all be poor here");
   await expect(page.locator(".msg--player").last().locator(".move--watch")).toContainText("assumption");
 
