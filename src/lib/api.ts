@@ -30,16 +30,22 @@ export function setAccessCode(code: string): void {
   accessCode = code;
 }
 
+/** crypto.randomUUID only exists in secure contexts; a classroom server on plain http://<LAN IP> isn't one. */
+function randomId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** A random per-browser id, so rate limits apply per player rather than per shared school IP. */
 const clientId = (() => {
   try {
     const existing = localStorage.getItem("common-ground:client");
     if (existing) return existing;
-    const id = crypto.randomUUID();
+    const id = randomId();
     localStorage.setItem("common-ground:client", id);
     return id;
   } catch {
-    return crypto.randomUUID();
+    return randomId();
   }
 })();
 

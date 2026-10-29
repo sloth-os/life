@@ -1,5 +1,7 @@
 # Common Ground
 
+[![CI](https://github.com/sloth-os/life/actions/workflows/ci.yml/badge.svg)](https://github.com/sloth-os/life/actions/workflows/ci.yml)
+
 > *Explore the real world. Meet its people. Find common ground.*
 
 **Common Ground** is a web game built around AI. You travel anywhere on Earth through **Google Maps**, meet **AI locals grounded in real places**, and earn their trust with real social skills. Each conversation ends with a **mentor debrief** that quotes your own words: what worked, one thing to try, and a rewrite of a line you actually said. As locals come to trust you, they share **insights about the place's nature, culture, history, society and economy**, each linked to its source. Those insights become cards in your field journal, which you review with spaced repetition.
@@ -49,6 +51,18 @@ cp .env.example .env   # then fill in what you have
 | `EFFORT_TURN`, `EFFORT_DEBRIEF`, … | Claude effort per task (defaults: `low` for turns and hints, `medium` for the rest) |
 
 Production: `npm run build && npm start`.
+
+### Docker
+
+Every push to `main` publishes a multi-arch image (`linux/amd64`, `linux/arm64`) to the GitHub Container Registry:
+
+```bash
+docker run -p 8787:8787 \
+  -e ANTHROPIC_API_KEY=... -e GOOGLE_MAPS_API_KEY=... -e GOOGLE_MAPS_SERVER_KEY=... \
+  ghcr.io/sloth-os/life:latest
+```
+
+It takes the same environment variables as above (or `--env-file .env`). Tags are `latest` and the commit SHA. To build it yourself: `docker build -t common-ground .`
 
 ### Modes
 
@@ -101,14 +115,21 @@ This is engineering diligence, not legal advice. Review the terms for your own d
 ```bash
 npm run typecheck    # TypeScript (server + client + tests)
 npm test             # unit + integration (Vitest)
-npm run test:e2e     # browser tests (Playwright; desktop + phone)
+npm run test:e2e     # browser tests on desktop Chromium (Playwright)
+
+./scripts/start-redroid.sh   # a real Android device: redroid (Android 12 in Docker) + Chromium
+npm run test:e2e:mobile      # the same journey on that device, at phone and tablet sizes
 ```
+
+The mobile tests drive Chromium on a real Android system rather than desktop emulation, so touch, viewport and layout behave as on a phone. They need Docker and the `binder_linux` kernel module; the script installs the module if it's missing and reuses a running device.
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the build and typecheck, unit and integration tests, and the browser tests in two jobs: desktop Chromium, and a real Android device (redroid) at phone and tablet sizes. When they all pass, it builds the multi-arch Docker image; it publishes the image only for pushes to `main`.
 
 The tests run without network or keys:
 - **Claude**: the real Anthropic SDK with a fake `fetch` serving streamed responses. Checks the request shape (model, effort, structured output schema, caching, fallback beta) and the handling of refusals, truncation, schema violations and rate limits.
 - **Maps agent tools**: our MCP client against a local MCP server with the same tool names and argument shapes.
 - **API**: the full HTTP flow through the real engine with Demo AI, including SSE streaming, access codes and rate limiting.
-- **E2E**: onboarding → travel → conversation (including a stereotyping line flagged as `⚠ assumption`) → coach → reflection → debrief → journal review, on desktop and a Pixel 7 viewport.
+- **E2E**: onboarding → travel → conversation (including a stereotyping line flagged as `⚠ assumption`) → coach → reflection → debrief → journal review. Runs on desktop Chromium, and on Chromium on a real Android device at phone (390×844) and tablet (768×1024) sizes, with layout checks for each.
 
 ```
 shared/        game vocabulary + rules + API schemas (used by both sides)
