@@ -6,6 +6,8 @@ import OpenAI from "openai";
 import { ClaudeGameAI } from "./ai/claude.ts";
 import { DemoGameAI } from "./ai/demo.ts";
 import { OpenAIGameAI } from "./ai/openai.ts";
+import { VoiceService } from "./ai/voice.ts";
+import { ImageGateway } from "./images.ts";
 import type { GameAI } from "./ai/types.ts";
 import { createApp } from "./app.ts";
 import { loadConfig, loadDotEnv } from "./config.ts";
@@ -40,8 +42,12 @@ function createAI(): GameAI {
   }
 }
 const ai = createAI();
+const voice = config.voice
+  ? new VoiceService({ client: new OpenAI({ apiKey: config.voice.apiKey ?? "not-needed", baseURL: config.voice.baseUrl, maxRetries: 1 }), model: config.voice.model, voices: config.voice.voices, log })
+  : undefined;
+const images = config.images ? new ImageGateway({ config: config.images, log }) : undefined;
 const engine = new GameEngine({ ai, grounding });
-const app = createApp({ config, engine, grounding, log });
+const app = createApp({ config, engine, grounding, voice, images, log });
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 if (config.dev) {
@@ -67,6 +73,8 @@ const server = app.listen(config.port, () => {
           ? `OpenAI-compatible (${config.model}${config.aiBaseUrl ? ` at ${new URL(config.aiBaseUrl).host}` : ""})`
           : "Demo AI (scripted) — set ANTHROPIC_API_KEY, or AI_PROVIDER=openai with AI_MODEL"
     }`,
+    `     Voice: ${config.voice ? `${config.voice.model} (voices ${config.voice.voices.join(", ")})` : "browser speech where available — set VOICE_MODEL for an omni voice model"}`,
+    `     Postcards: ${config.images ? `${config.images.model ?? "auto"} through mm-gateway` : "off — set MM_GATEWAY_URL and MM_GATEWAY_API_KEY"}`,
     `     Maps: ${config.mapsMode === "google" ? "Google Maps" : "Open map mode — set GOOGLE_MAPS_API_KEY for Google Maps"}`,
     `     Place grounding: ${grounding.placeGrounding === "google" ? "Maps Experience agent tools + Wikipedia" : "Wikipedia"}${config.mapsMode === "google" && !mapsTools ? " (set GOOGLE_MAPS_SERVER_KEY to enable Maps agent tools)" : ""}`,
     config.accessCode ? "     Access code: required" : "",

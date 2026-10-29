@@ -7,8 +7,14 @@ import type {
   ExpeditionBriefing,
   ExpeditionRequest,
   GeoResult,
+  Heard,
   Hint,
   HintRequest,
+  ListenRequest,
+  PostcardRequest,
+  PronounceRequest,
+  PronunciationResult,
+  SpeakRequest,
   Persona,
   PersonaRequest,
   StreamProgress,
@@ -84,6 +90,19 @@ async function call<T>(path: string, body?: unknown, signal?: AbortSignal): Prom
   return (await response.json()) as T;
 }
 
+/** POST that answers with bytes (speech, images). */
+async function binary(path: string, body: unknown, signal?: AbortSignal): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(path, { method: "POST", headers: headers(true), body: JSON.stringify(body), signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new ApiError(0, "offline", "Couldn't reach the game server. Check your connection.");
+  }
+  if (!response.ok) throw await asError(response);
+  return response.blob();
+}
+
 /** Handlers for the events a streamed call sends before its `result`. */
 export interface StreamHandlers {
   signal?: AbortSignal;
@@ -145,4 +164,8 @@ export const api = {
   turn,
   hint: (body: HintRequest) => call<Hint>("/api/coach/hint", body),
   debrief: (body: DebriefRequest, handlers?: StreamHandlers) => stream<Debrief>("/api/coach/debrief", body, handlers),
+  speak: (body: SpeakRequest, signal?: AbortSignal) => binary("/api/voice/speak", body, signal),
+  listen: (body: ListenRequest) => call<Heard>("/api/voice/listen", body),
+  pronounce: (body: PronounceRequest) => call<PronunciationResult>("/api/voice/pronounce", body),
+  postcard: (body: PostcardRequest) => binary("/api/postcard", body),
 };

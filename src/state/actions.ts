@@ -9,10 +9,10 @@ import {
   scheduleRecall,
   updateSkill,
 } from "../../shared/rules.ts";
-import type { Destination, Expedition, ExpeditionContext, NpcCard, NpcTurn, Persona, PlayerContext } from "../../shared/schemas.ts";
+import type { Delivery, Destination, Expedition, ExpeditionContext, NpcCard, NpcTurn, Persona, PlayerContext } from "../../shared/schemas.ts";
 import { SKILL_IDS, skillLevelName } from "../../shared/skills.ts";
 import { ApiError, api, setAccessCode } from "../lib/api.ts";
-import { speak } from "../lib/speech.ts";
+import { voiceLine } from "../lib/voice.ts";
 import { store } from "./store.ts";
 import type { DebriefResult, EncounterState, GameState, PlayerProfile, Screen, Settings, Toast } from "./types.ts";
 
@@ -251,7 +251,7 @@ export async function meet(npcId: string): Promise<void> {
       awaiting: false,
     };
     store.set((st) => ({ ...st, active: { ...st.active, encounter, debrief: null }, ui: { ...st.ui, screen: "encounter" } }));
-    if (store.get().settings.voiceOutput) speak(opening.text);
+    sayAloud(opening.text, base, expedition.id, npc.id);
   } catch (error) {
     toast("error", `Couldn't find ${npc.name}`, message(error));
   }
@@ -279,15 +279,16 @@ function encounterBase(s: GameState, encounter: EncounterState) {
 let turnAbort: AbortController | null = null;
 
 /** Send the player's line; returns false if it couldn't be delivered (so the UI keeps the draft). */
-export async function sendMessage(text: string): Promise<boolean> {
+/** `delivery` is how the line sounded when it was spoken (voice mode). */
+export async function sendMessage(text: string, delivery?: Delivery): Promise<boolean> {
   const s = store.get();
   const encounter = s.active.encounter;
   const line = text.trim();
   if (!encounter || encounter.status !== "active" || encounter.awaiting || !line) return false;
-  const request = { ...encounterBase(s, encounter), playerMessage: line };
+  const request = { ...encounterBase(s, encounter), playerMessage: line, playerDelivery: delivery };
   const expedition = s.expeditions.find((e) => e.id === encounter.expeditionId)!;
 
-  patchEncounter((e) => ({ ...e, transcript: [...e.transcript, { speaker: "player", text: line }], awaiting: true, streaming: "" }));
+  patchEncounter((e) => ({ ...e, transcript: [...e.transcript, { speaker: "player", text: line, delivery }], awaiting: true, streaming: "" }));
   turnAbort = new AbortController();
   try {
     const result = await api.turn(request, (reply) => patchEncounter((e) => ({ ...e, streaming: reply })), turnAbort.signal);
@@ -346,7 +347,7 @@ export async function sendMessage(text: string): Promise<boolean> {
       };
     });
     // Insights and phrases appear inline in the conversation; no toasts competing for attention.
-    if (store.get().settings.voiceOutput) speak(result.reply);
+    sayAloud(result.reply, encounter.persona, encounter.expeditionId, encounter.npcId);
     return true;
   } catch (error) {
     patchEncounter((e) => {
@@ -373,6 +374,13 @@ export async function requestHint(): Promise<void> {
   } finally {
     store.ui({ hintLoading: false });
   }
+}
+
+/** A local's line, aloud when the player has voices on. */
+function sayAloud(text: string, persona: Persona, expeditionId: string, npcId: string): void {
+  const s = store.get();
+  if (!s.settings.voiceOutput) return;
+  void voiceLine(text, { pronouns: persona.pronouns, seed: `${expeditionId}:${npcId}` }, s.ui.config?.features.voiceOutput === "model");
 }
 
 export function leaveEncounter(): void {

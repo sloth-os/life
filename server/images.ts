@@ -2,8 +2,25 @@
 // image provider's credentials and routes the request; the game creates a task, polls it, and
 // returns the image. The prompt names only the place and the themes: never Google Maps content.
 import { randomBytes } from "node:crypto";
+import type { PostcardRequest } from "../shared/schemas.ts";
+import type { LensId } from "../shared/world.ts";
 import type { ImageConfig } from "./config.ts";
 import { HttpError } from "./util/errors.ts";
+
+const THEMES: Record<LensId, string> = {
+  nature: "its landscape, plants and weather",
+  culture: "its architecture, crafts and traditions",
+  history: "its old streets and landmarks",
+  society: "everyday street life and gathering places",
+  economy: "its markets, workshops and small trades",
+};
+
+/** The postcard prompt: the place the player chose and the themes they explored, nothing from Google Maps. */
+export function postcardPrompt(request: PostcardRequest): string {
+  const place = [request.label, request.country].filter(Boolean).join(", ");
+  const themes = [...new Set(request.lenses)].map((l) => THEMES[l]).join("; ") || "its everyday life";
+  return `A hand-painted vintage travel postcard of ${place}, celebrating ${themes}. Gouache and watercolour on textured paper, warm natural light, rich but gentle colours, a wide scenic view. Respectful and true to the place, without clichés or stereotypes. People only as small figures in the distance. No text, no lettering, no logos, no border.`;
+}
 
 interface GatewayTask {
   id: string;

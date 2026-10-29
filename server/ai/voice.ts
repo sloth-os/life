@@ -99,16 +99,24 @@ export function wordOverlap(a: string, b: string): number {
 
 export class VoiceService {
   readonly #opts: VoiceServiceOptions;
+  /** Unknown until the first line: some omni models hear but can't speak (they reject audio output). */
+  #canSpeak: boolean | null;
   #format: AudioFormat = "wav";
   #inputStyle: InputStyle = "data_uri";
   readonly #cache = new Map<string, SpeakResult>();
 
-  constructor(opts: VoiceServiceOptions) {
+  constructor(opts: VoiceServiceOptions & { speak?: boolean }) {
     this.#opts = opts;
+    this.#canSpeak = opts.speak === false ? false : null;
   }
 
   get model(): string {
     return this.#opts.model;
+  }
+
+  /** False once the model has turned down speaking (the browser's voice is used instead). */
+  get canSpeak(): boolean | null {
+    return this.#canSpeak;
   }
 
   /** A voice for a local: by pronouns where the list allows, else by a stable hash of the seed. */
@@ -123,6 +131,7 @@ export class VoiceService {
 
   /** Read a line aloud. Results are cached, so replaying a line costs nothing. */
   async speak(text: string, voice: string, signal?: AbortSignal): Promise<SpeakResult> {
+    if (this.#canSpeak === false) throw new HttpError(501, "voice_cannot_speak", "This voice model listens but doesn't speak; the browser's voice is used instead.");
     const key = `${voice}\u0000${text}`;
     const cached = this.#cache.get(key);
     if (cached) return cached;
@@ -130,10 +139,16 @@ export class VoiceService {
       const format = this.#format;
       try {
         const result = await this.#speak(text, voice, format, signal);
+        this.#canSpeak = true;
         this.#cache.set(key, result);
         if (this.#cache.size > 200) this.#cache.delete(this.#cache.keys().next().value!);
         return result;
       } catch (error) {
+        if (error instanceof OpenAI.BadRequestError && /modalit/i.test(error.message)) {
+          this.#opts.log?.(`[voice] ${this.#opts.model} can't speak (${error.message.slice(0, 160)}); locals use the browser's voice`);
+          this.#canSpeak = false;
+          throw new HttpError(501, "voice_cannot_speak", "This voice model listens but doesn't speak; the browser's voice is used instead.");
+        }
         if (format === "wav" && error instanceof OpenAI.BadRequestError && /format|pcm|wav/i.test(error.message)) {
           this.#opts.log?.(`[voice] the server rejected wav output (${error.message.slice(0, 160)}); using pcm16`);
           this.#format = "pcm16";

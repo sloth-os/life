@@ -165,10 +165,23 @@ export const PersonaSchema = z.object({
 });
 export type Persona = z.infer<typeof PersonaSchema>;
 
+export const TONES = ["warm", "friendly", "neutral", "hesitant", "tense", "flat", "impatient"] as const;
+export const PACES = ["slow", "natural", "fast"] as const;
+
+/** How a spoken line sounded (voice mode): the local hears it, the mentor may comment on it. */
+export const DeliverySchema = z.object({
+  tone: z.enum(TONES),
+  pace: z.enum(PACES),
+  clarity: z.number().int().min(0).max(100),
+  note: text(240),
+});
+export type Delivery = z.infer<typeof DeliverySchema>;
+
 export const PlayerTurnSchema = z.object({
   speaker: z.literal("player"),
   text: text(PLAYER_MESSAGE_MAX),
   moves: z.array(z.enum(MOVE_IDS)).max(8).optional(),
+  delivery: DeliverySchema.optional(),
 });
 export const NpcTurnSchema = z.object({
   speaker: z.literal("npc"),
@@ -218,7 +231,7 @@ export const PersonaRequestSchema = z.object({
 });
 export type PersonaRequest = z.infer<typeof PersonaRequestSchema>;
 
-export const TurnRequestSchema = z.object({ ...EncounterBase, playerMessage: text(PLAYER_MESSAGE_MAX).min(1) });
+export const TurnRequestSchema = z.object({ ...EncounterBase, playerMessage: text(PLAYER_MESSAGE_MAX).min(1), playerDelivery: DeliverySchema.optional() });
 export type TurnRequest = z.infer<typeof TurnRequestSchema>;
 
 export const HintRequestSchema = z.object(EncounterBase);
@@ -289,11 +302,62 @@ export interface GeoResult {
   attribution: string;
 }
 
+// ── Voice and postcards ───────────────────────────────────────────────────
+/** Recorded speech: a base64 WAV of at most `VOICE_MAX_SECONDS`. */
+export const VOICE_MAX_SECONDS = 30;
+const AudioSchema = z.string().min(64).max(3_000_000);
+
+export const SpeakRequestSchema = z.object({
+  text: text(600).min(1),
+  /** The local's pronouns and id choose a voice that stays the same all conversation. */
+  pronouns: text(30).optional(),
+  seed: text(80).optional(),
+});
+export type SpeakRequest = z.infer<typeof SpeakRequestSchema>;
+
+export const ListenRequestSchema = z.object({ audio: AudioSchema, context: text(300).optional() });
+export type ListenRequest = z.infer<typeof ListenRequestSchema>;
+
+export const PronounceRequestSchema = z.object({ audio: AudioSchema, phrase: text(80).min(1), language: text(60), meaning: text(160).optional() });
+export type PronounceRequest = z.infer<typeof PronounceRequestSchema>;
+
+export interface Heard extends Delivery {
+  transcript: string;
+}
+
+export interface PronunciationResult {
+  transcript: string;
+  score: number;
+  tip: string;
+}
+
+export const PostcardRequestSchema = z.object({
+  expeditionId: text(40),
+  label: text(160),
+  country: text(120).optional(),
+  lenses: z.array(z.enum(LENS_IDS)).max(4),
+});
+export type PostcardRequest = z.infer<typeof PostcardRequestSchema>;
+
+export interface AppFeatures {
+  /** The game listens through a voice model: speech in, with how it sounded, and pronunciation practice. */
+  voice: boolean;
+  /** Who gives the locals their voices: the voice model, or the browser's built-in speech. */
+  voiceOutput: "model" | "browser";
+  /** Postcard illustrations through the image gateway. */
+  postcards: boolean;
+  /** Teachers can create classes and assign expeditions. */
+  classroom: boolean;
+  /** 3D fly-ins over Google's photorealistic map. */
+  flyIns: boolean;
+}
+
 export interface AppConfig {
   version: string;
   mapsMode: "google" | "open";
   aiMode: "claude" | "openai" | "demo";
   model?: string;
+  features: AppFeatures;
   googleMapsApiKey?: string;
   googleMapId?: string;
   placeGrounding: "google" | "wikipedia";

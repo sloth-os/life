@@ -168,6 +168,13 @@ jobs:
       - run: npm ci
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
+      # Real speech for voice mode: an English line for the microphone and a Spanish phrase to pronounce.
+      - name: Make speech samples
+        run: |
+          sudo apt-get install -y --no-install-recommends espeak-ng > /dev/null
+          mkdir -p test-results/real
+          espeak-ng -v en-us -s 145 -w test-results/real/voice-input.wav "Hello! It's my first time here. What do you enjoy most about your work?"
+          espeak-ng -v es -s 130 -w test-results/real/pronounce-es.wav "Buenas noches"
       # mm-gateway holds the image provider's key; the app gets only the gateway's URL and a run key.
       - name: Start mm-gateway
         if: needs.real-check.outputs.images == 'true'

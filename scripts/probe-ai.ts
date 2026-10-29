@@ -3,7 +3,7 @@
 // sends), the voice model speaking and listening, and the image gateway. CI runs it before the
 // real-services suite, so a misconfigured service fails fast with the server's own answer.
 //   node scripts/probe-ai.ts
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import OpenAI from "openai";
 import { detectThinkingStyle, loadConfig, loadDotEnv } from "../server/config.ts";
 import { thinkingFields } from "../server/ai/openai.ts";
@@ -72,6 +72,10 @@ async function probeText(): Promise<void> {
   }
 }
 
+/** Speech clips CI synthesizes with espeak-ng (see the workflow); the probe skips what's missing. */
+const SPEECH = { line: "test-results/real/voice-input.wav", phrase: "test-results/real/pronounce-es.wav" };
+const SPOKEN_LINE = "Hello! It's my first time here. What do you enjoy most about your work?";
+
 async function probeVoice(): Promise<void> {
   const voice = config.voice;
   if (!voice) {
@@ -81,25 +85,34 @@ async function probeVoice(): Promise<void> {
   const client = new OpenAI({ apiKey: voice.apiKey ?? "not-needed", baseURL: voice.baseUrl, maxRetries: 0, timeout: 120_000 });
   const service = new VoiceService({ client, model: voice.model, voices: voice.voices, log: (m) => console.log(m) });
   console.log(`voice: ${voice.model} at ${voice.baseUrl ?? "the default OpenAI endpoint"}, voices ${voice.voices.join(", ")}`);
-  const line = "Hello! It's my first time in Kyoto. What are you working on today?";
+  // Speaking is optional: a model that only hears leaves the locals' voices to the browser.
   try {
-    const spoken = await service.speak(line, voice.voices[0]!);
+    const spoken = await service.speak(SPOKEN_LINE, voice.voices[0]!);
     await writeFile(`${OUT}/speak.wav`, spoken.wav);
-    console.log(`voice speak: ${spoken.durationMs}ms of audio, transcript ${JSON.stringify(spoken.transcript)} (word overlap ${wordOverlap(line, spoken.transcript).toFixed(2)})`);
-    const heard = await service.listen(spoken.wav, "The learner is greeting a local in Kyoto.");
-    console.log(`voice listen: ${JSON.stringify(heard)} (word overlap ${wordOverlap(line, heard.transcript).toFixed(2)})`);
+    console.log(`voice speak: ${spoken.durationMs}ms of audio, transcript ${JSON.stringify(spoken.transcript)} (word overlap ${wordOverlap(SPOKEN_LINE, spoken.transcript).toFixed(2)})`);
   } catch (error) {
-    console.log(`voice speak/listen failed: ${describe(error)}`);
-    failures++;
+    console.log(`voice speak: unavailable (${describe(error)}); the locals use the browser's voice.`);
   }
-  try {
-    const hello = await service.speak("こんばんは", voice.voices[1] ?? voice.voices[0]!);
-    const scored = await service.pronounce(hello.wav, { phrase: "Konbanwa (こんばんは)", language: "Japanese", meaning: "Good evening" });
-    console.log(`voice pronounce: ${wavDurationMs(hello.wav)}ms of audio → ${JSON.stringify(scored)}`);
-  } catch (error) {
-    console.log(`voice pronounce failed: ${describe(error)}`);
-    failures++;
-  }
+  const line = await readFile(SPEECH.line).catch(() => null);
+  if (line) {
+    try {
+      const heard = await service.listen(line, "The learner is greeting a local.");
+      console.log(`voice listen: ${wavDurationMs(line)}ms → ${JSON.stringify(heard)} (word overlap ${wordOverlap(SPOKEN_LINE, heard.transcript).toFixed(2)})`);
+    } catch (error) {
+      console.log(`voice listen failed: ${describe(error)}`);
+      failures++;
+    }
+  } else console.log(`voice listen: skipped (no ${SPEECH.line})`);
+  const phrase = await readFile(SPEECH.phrase).catch(() => null);
+  if (phrase) {
+    try {
+      const scored = await service.pronounce(phrase, { phrase: "Buenas noches", language: "Spanish", meaning: "Good evening" });
+      console.log(`voice pronounce: ${wavDurationMs(phrase)}ms → ${JSON.stringify(scored)}`);
+    } catch (error) {
+      console.log(`voice pronounce failed: ${describe(error)}`);
+      failures++;
+    }
+  } else console.log(`voice pronounce: skipped (no ${SPEECH.phrase})`);
 }
 
 async function probeImages(): Promise<void> {
