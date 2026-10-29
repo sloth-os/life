@@ -2,8 +2,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import express from "express";
+import OpenAI from "openai";
 import { ClaudeGameAI } from "./ai/claude.ts";
 import { DemoGameAI } from "./ai/demo.ts";
+import { OpenAIGameAI } from "./ai/openai.ts";
+import type { GameAI } from "./ai/types.ts";
 import { createApp } from "./app.ts";
 import { loadConfig, loadDotEnv } from "./config.ts";
 import { GameEngine } from "./game/engine.ts";
@@ -16,10 +19,18 @@ const log = (message: string) => console.log(message);
 
 const mapsTools = config.googleMapsServerKey ? new MapsAgentTools({ apiKey: config.googleMapsServerKey, log, version: config.version }) : undefined;
 const grounding = new GroundingService({ config, mapsTools, log });
-const ai =
-  config.aiMode === "claude"
-    ? new ClaudeGameAI({ client: new Anthropic({ maxRetries: 2 }), model: config.model, effort: config.effort, log })
-    : new DemoGameAI();
+function createAI(): GameAI {
+  switch (config.aiProvider) {
+    case "anthropic":
+      return new ClaudeGameAI({ client: new Anthropic({ apiKey: config.aiApiKey, baseURL: config.aiBaseUrl, maxRetries: 2 }), model: config.model, effort: config.effort, log });
+    case "openai":
+      // Local servers (Ollama, vLLM) often need no key; the SDK insists on one.
+      return new OpenAIGameAI({ client: new OpenAI({ apiKey: config.aiApiKey ?? "not-needed", baseURL: config.aiBaseUrl, maxRetries: 2 }), model: config.model, jsonMode: config.openaiJsonMode, log });
+    default:
+      return new DemoGameAI();
+  }
+}
+const ai = createAI();
 const engine = new GameEngine({ ai, grounding });
 const app = createApp({ config, engine, grounding, log });
 
@@ -40,7 +51,13 @@ if (config.dev) {
 const server = app.listen(config.port, () => {
   const lines = [
     `\n  🌍 Common Ground is running at http://localhost:${config.port}`,
-    `     AI:   ${config.aiMode === "claude" ? `Claude (${config.model})` : "Demo AI (scripted) — set ANTHROPIC_API_KEY for Claude"}`,
+    `     AI:   ${
+      config.aiProvider === "anthropic"
+        ? `Claude (${config.model})`
+        : config.aiProvider === "openai"
+          ? `OpenAI-compatible (${config.model}${config.aiBaseUrl ? ` at ${new URL(config.aiBaseUrl).host}` : ""})`
+          : "Demo AI (scripted) — set ANTHROPIC_API_KEY, or AI_PROVIDER=openai with AI_MODEL"
+    }`,
     `     Maps: ${config.mapsMode === "google" ? "Google Maps" : "Open map mode — set GOOGLE_MAPS_API_KEY for Google Maps"}`,
     `     Place grounding: ${grounding.placeGrounding === "google" ? "Maps Experience agent tools + Wikipedia" : "Wikipedia"}${config.mapsMode === "google" && !mapsTools ? " (set GOOGLE_MAPS_SERVER_KEY to enable Maps agent tools)" : ""}`,
     config.accessCode ? "     Access code: required" : "",

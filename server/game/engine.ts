@@ -51,7 +51,7 @@ export function offsetPoint(center: LatLng, index: number): LatLng {
   return { lat: center.lat + dLat, lng: center.lng + dLng };
 }
 
-export function finalizeExpedition(draft: ExpeditionDraft, pack: GroundingPack, request: ExpeditionRequest, aiMode: "claude" | "demo", now = Date.now()): Expedition {
+export function finalizeExpedition(draft: ExpeditionDraft, pack: GroundingPack, request: ExpeditionRequest, aiMode: GameAI["mode"], now = Date.now()): Expedition {
   if (draft.npcs.length === 0) throw new AiOutputError("no locals were created");
   const npcs: NpcCard[] = draft.npcs.slice(0, 3).map((n, i) => {
     const place = n.place_source_id ? pack.places.find((p) => p.sourceId === n.place_source_id) : undefined;
@@ -264,7 +264,7 @@ export class GameEngine {
     this.#deps = deps;
   }
 
-  get aiMode(): "claude" | "demo" {
+  get aiMode(): GameAI["mode"] {
     return this.#deps.ai.mode;
   }
 

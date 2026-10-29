@@ -93,7 +93,7 @@ The server collects a **grounding pack** for the coordinates:
 - *Google mode*: Maps Experience agent tools (`search_places` once per lens, `lookup_weather`)
 - *Both modes*: Wikipedia geosearch (encyclopedic context), plus Open-Meteo weather in Open mode
 
-Claude then writes the expedition: a title, a scene grounded in the current weather and setting, a local greeting, a **curiosity board** (three open questions about the place), and **three locals** anchored to real nearby places. Each local has a lens, a scenario type, and a difficulty. Sources are listed with links.
+The Game Master model then writes the expedition: a title, a scene grounded in the current weather and setting, a local greeting, a **curiosity board** (three open questions about the place), and **three locals** anchored to real nearby places. Each local has a lens, a scenario type, and a difficulty. Sources are listed with links.
 
 ### 4.3 Approach and converse (Partner)
 Choosing a local opens Street View at their place (Google mode) and generates their full persona: personality, communication style, current situation, a hidden concern, boundaries, and three **insights** gated at rapport 30/55/75, each with a recall question.
@@ -168,6 +168,7 @@ flowchart TB
     GRD[Grounding<br/>Maps agent tools · Wikipedia · weather]
   end
   CL[Claude API<br/>claude-opus-5-5 · structured outputs ·<br/>fallbacks · prompt caching]
+  OAI[or any OpenAI-compatible API<br/>Chat Completions · always streamed ·<br/>JSON schema → JSON mode → text]
   MAPS[Maps Experience agent tools<br/>MCP: search_places, lookup_weather]
   WIKI[Wikipedia API]
   UI <--> R
@@ -176,6 +177,7 @@ flowchart TB
   GMSTER --> GRD
   GRD --> MAPS & WIKI
   GMSTER & PART & MENT --> CL
+  GMSTER & PART & MENT -.-> OAI
 ```
 
 - **Game Master** creates the expedition from the grounding pack, then each persona. It follows the persona charter (anti-stereotype rules) and a factual-grounding rule: every factual claim must come from the numbered sources or be general knowledge, and when the sources are thin it stays modest.
@@ -193,18 +195,46 @@ flowchart TB
 - **Prompt-injection hygiene**: player text is wrapped in `<player>` tags and treated as dialogue. NPCs stay in character, and the server never runs instructions taken from model output.
 - **Demo mode**: a deterministic scripted engine (heuristic move detection plus templates, grounded in real Wikipedia text). It has the same interface, so the full game runs without keys, and the e2e tests use it.
 
-### 7.3 Latency plan
+### 7.3 OpenAI-compatible models
+Any server that speaks the Chat Completions API (OpenAI, model gateways, vLLM, Ollama) can play the three agents through the official `openai` SDK, with the same prompts as Claude. Servers differ in what they support, so the provider adapts:
+- **Every call streams.** Thinking models can reason for minutes before their first output token. A non-streamed request stays silent all that time and runs into time-to-headers timeouts, which is what hung the first live run. Streaming also lets the NPC's `reply` reach the browser as it is written, as with Claude.
+- **Structured output degrades gracefully.** It starts with strict `json_schema`, derived from the Zod schemas with every object closed and fully required. If the server rejects that, it tries `json_object`, then plain text with the schema in the prompt. A rejected mode is remembered for the life of the process.
+- **Replies are repaired before validation.** Reasoning in `<think>` tags and code fences is stripped. Missing fields are filled, and loose enum values are matched (`"Warm"` → `warm`) or replaced. A reply that isn't JSON gets one repair round. The engine then validates and clamps as usual.
+- **Claude-only features are absent.** There are no prompt-caching hints (many servers cache prefixes on their own) and no server-side refusal fallback. Refusals and content filters surface as errors.
+- **Calls are observable.** Each call logs time to first token, total time, reasoning size and finish reason. `scripts/probe-ai.ts` checks which structured-output modes a server accepts in seconds.
+
+### 7.4 Latency plan
 | Step | Target | How |
 |---|---|---|
 | Arrive | ≈10–20 s | Map fly-in plus "scouting" progress steps; personas for all three locals are **prefetched in parallel** while the learner reads the briefing |
 | NPC reply | first words ≈2–3 s | low effort plus streaming of `reply` |
 | Debrief | ≈10–15 s | runs while the learner writes their self-assessment |
 
-### 7.4 Evaluation plan (for prompt iteration)
+**Measured with a thinking model.** Two CI runs of the real-services suite (October 2026) used `qwen3.8-max` through an OpenAI-compatible gateway:
+
+| Step | Before the first output token | Total |
+|---|---|---|
+| Expedition | 3.6–4 min (33–36k characters of reasoning) | 3.9–4.3 min |
+| Persona (each; the three run in parallel) | 2–4.3 min | 2.3–4.6 min |
+| NPC reply | 5–18 s | 7–20 s |
+| Debrief | 1–2 min | 1.3–2.2 min |
+
+Conversation is usable at this speed. Arrival takes more than ten times its target and the debrief five to thirteen times; almost all of that is reasoning.
+
+**Improvements, in order of expected payoff:**
+1. **Thinking controls per task.** Pass the provider's own controls through configuration, mapped from the per-task effort settings: `reasoning_effort` for OpenAI reasoning models, `enable_thinking` or `thinking_budget` for Qwen. The Game Master would then reason less where it matters less.
+2. **A model per task.** Let the expedition and persona calls use a faster or non-thinking model while the mentor keeps a stronger one.
+3. **Live progress.** The server already receives tokens as they arrive. Stream the Game Master's progress to the browser, so the arrival screen shows activity and elapsed time instead of timed steps that stall on "Meeting the locals…". A steady stream also keeps reverse proxies from timing out.
+4. **Arrive in two stages.** Stream the briefing (title, scene, greeting, curiosity board) first and let the locals follow, so the learner reads while the rest is written.
+
+Until (3) lands, a reverse proxy in front of the server must allow multi-minute responses for `/api/expedition`, `/api/npc/persona` and `/api/coach/debrief`. nginx's default `proxy_read_timeout` is 60 s.
+
+### 7.5 Evaluation plan (for prompt iteration)
 - **Partner realism**: on scripted learner transcripts (rude, generic, excellent), check that rapport moves in the right direction, insights are withheld before thresholds, and boundaries hold.
 - **Stereotype audit**: generate personas for 50 places and run a marked-words scan (banned-trope lexicon). Human review samples.
 - **Mentor fidelity**: every quoted piece of evidence must appear verbatim in the transcript (checked automatically). Rubric agreement with human raters on a labeled set.
 - **Grounding**: insight facts are checked against the source extracts (LLM-judge plus spot checks).
+- **Live smoke test**: on every push to `main`, CI's real-services suite plays one full expedition against Google Maps and the configured model. The server's per-call timing lines feed the measurements in §7.4.
 
 ---
 
@@ -243,10 +273,10 @@ Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specif
 | Client | React 19 + TypeScript + Vite | Component-based UI for many screens; fast dev server |
 | Maps | `@googlemaps/js-api-loader` (Maps JS: maps, marker, streetView) / MapLibre GL (Open mode) | Official loader; open fallback for keyless play and tests |
 | Server | Node ≥ 22.18 (native TypeScript), Express 5 | Stateless; keeps keys secret; streams SSE |
-| AI | `@anthropic-ai/sdk` (beta messages: structured outputs, fallbacks) | Official SDK |
+| AI | `@anthropic-ai/sdk` (beta messages: structured outputs, fallbacks); `openai` for OpenAI-compatible Chat Completions | Official SDKs |
 | Maps grounding | `@modelcontextprotocol/sdk` client → Maps Experience agent tools | Official MCP client; Streamable HTTP + `X-Goog-Api-Key` |
 | Validation | Zod 4 | Shared schemas for requests and AI outputs |
-| Tests | Vitest (unit/integration, fake `fetch` for the Claude SDK), Playwright (e2e in Open + Demo mode) | Full coverage without keys |
+| Tests | Vitest (unit/integration, fake `fetch` for the Claude and OpenAI SDKs), Playwright (e2e in Open + Demo mode on desktop Chromium and Android; a real-services suite with Google Maps and a real model) | Full coverage without keys, plus a keyed run of the real thing in CI |
 
 **Operations.** Open-data responses are cached (Wikipedia and Nominatim for 24 h, weather for 15 min) and retried once when rate-limited, and requests carry an identifying User-Agent. AI routes are rate-limited **per player**, using a browser-generated id, with a 10× ceiling per IP, so a classroom behind one IP isn't throttled as one person. An optional `ACCESS_CODE` gates classroom deployments.
 
@@ -255,7 +285,7 @@ Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specif
 **API surface.**
 | Route | Purpose |
 |---|---|
-| `GET /api/config` | Modes (google/open, claude/demo), browser Maps key, map ID, feature flags |
+| `GET /api/config` | Modes (google/open, claude/openai/demo), browser Maps key, map ID, feature flags |
 | `GET /api/geo/search?q=` | "Go anywhere" search (agent tools `search_places` in Google mode; Nominatim in Open mode) |
 | `POST /api/expedition` | Grounding pack → expedition (title, scene, greeting, curiosity board, three locals, sources) |
 | `POST /api/npc/persona` | Full persona for one local (insights with recall quizzes) |
@@ -269,14 +299,14 @@ Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specif
 
 - **Learning**: Compass rating growth per skill; share of player turns with open questions or reflections; fewer `assumption`/`judgment` moves; calibration gap shrinking; recall accuracy; field missions completed.
 - **Experience**: encounter completion rate; return visits within 7 days; hint usage trend (should fall as skill rises); debrief helpfulness (thumbs up/down).
-- **Quality**: NPC rule adherence (eval suite in §7.4); verbatim-evidence rate in the mentor's quotes = 100%; stereotype-audit flags per 100 personas.
+- **Quality**: NPC rule adherence (eval suite in §7.5); verbatim-evidence rate in the mentor's quotes = 100%; stereotype-audit flags per 100 personas.
 
 ---
 
 ## 12. Roadmap
 
-- **v1 (this build)**: everything above, playable in Google or Open mode, with Claude or Demo AI.
-- **v1.1**: richer voice mode; photorealistic 3D fly-ins (`Map3DElement`); more postcards; localization of the interface.
+- **v1 (this build)**: everything above, playable in Google or Open mode, with Claude, any OpenAI-compatible model, or Demo AI.
+- **v1.1**: faster arrival with thinking models (§7.4); correct macron letters (ā ē ī ō ū) in the display font; richer voice mode; photorealistic 3D fly-ins (`Map3DElement`); more postcards; localization of the interface.
 - **v2**: classroom mode (teacher-assigned expeditions and focus skills, a class debrief view); two-person mediation scenes; Pro agent-tools options (review-based place insights); an "explain the debrief" follow-up chat with the mentor.
 
 ## References

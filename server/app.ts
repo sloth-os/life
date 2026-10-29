@@ -50,7 +50,7 @@ export function createApp(deps: AppDeps): express.Express {
     version: config.version,
     mapsMode: config.mapsMode,
     aiMode: engine.aiMode,
-    model: engine.aiMode === "claude" ? config.model : undefined,
+    model: engine.aiMode === "demo" ? undefined : config.model,
     googleMapsApiKey: config.googleMapsApiKey,
     googleMapId: config.mapsMode === "google" ? config.googleMapId : undefined,
     placeGrounding: grounding.placeGrounding,

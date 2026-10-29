@@ -4,5 +4,6 @@ dist/
 .env.local
 test-results/
 playwright-report/
+playwright-report-real/
 *.log
 .DS_Store

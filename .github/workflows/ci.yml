@@ -102,6 +102,80 @@ jobs:
             ${{ runner.temp }}/logcat.txt
           retention-days: 7
 
+  # The real-services suite: Google Maps in the browser and a real model, so real costs.
+  # Pushes to main and manual runs only; pull requests never get it (and forks get no secrets).
+  real-check:
+    name: Real services configured?
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          GOOGLE_MAPS_MAP_ID: ${{ vars.GOOGLE_MAPS_MAP_ID }}
+          VISION_MODEL_TYPE: ${{ vars.VISION_MODEL_TYPE }}
+          VISION_MODEL_BASE_URL: ${{ vars.VISION_MODEL_BASE_URL }}
+          VISION_MODEL: ${{ vars.VISION_MODEL }}
+          VISION_MODEL_API_KEY: ${{ secrets.VISION_MODEL_API_KEY }}
+        run: |
+          missing=()
+          for v in GOOGLE_MAPS_API_KEY GOOGLE_MAPS_MAP_ID VISION_MODEL_TYPE VISION_MODEL_BASE_URL VISION_MODEL VISION_MODEL_API_KEY; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::notice title=Real-services suite skipped::not set: ${missing[*]}"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  e2e-real:
+    name: End-to-end on real services
+    runs-on: ubuntu-24.04
+    needs: real-check
+    if: needs.real-check.outputs.configured == 'true'
+    timeout-minutes: 45
+    env:
+      # The org's model settings map onto the app's provider-neutral AI_* variables.
+      AI_PROVIDER: ${{ vars.VISION_MODEL_TYPE }}
+      AI_MODEL: ${{ vars.VISION_MODEL }}
+      AI_BASE_URL: ${{ vars.VISION_MODEL_BASE_URL }}
+      GOOGLE_MAPS_MAP_ID: ${{ vars.GOOGLE_MAPS_MAP_ID }}
+      APP_USER_AGENT: CommonGround-CI/0.1 (+https://github.com/${{ github.repository }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      # Fails fast, with the server's answer, if the model is unreachable or misconfigured.
+      - name: Probe the model
+        timeout-minutes: 8
+        env:
+          AI_API_KEY: ${{ secrets.VISION_MODEL_API_KEY }}
+        run: node scripts/probe-ai.ts
+      # The keys reach these steps only.
+      - name: Real-services suite
+        env:
+          AI_API_KEY: ${{ secrets.VISION_MODEL_API_KEY }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: npm run test:e2e:real
+      # Screenshots and the HTML report only: no traces, which would record the browser Maps key.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-real
+          path: |
+            playwright-report-real/
+            test-results/real/
+          if-no-files-found: ignore
+          retention-days: 7
+
   docker:
     name: Docker image (amd64 + arm64)
     runs-on: ubuntu-24.04
