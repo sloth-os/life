@@ -34,6 +34,14 @@ test("a full expedition: meet a local, talk, reflect, get mentored, review", asy
   await expect(debrief.locator(".evidence--watch")).toContainText("You people must all be poor here");
   await expect(debrief.getByText(/Field mission/i)).toBeVisible();
 
+  // Explain the debrief: a follow-up question, answered from this conversation.
+  await debrief.getByRole("button", { name: "How could I have said that differently?" }).click();
+  await expect(debrief.getByTestId("qa-answer")).toContainText("You could try");
+  await debrief.getByTestId("ask-input").fill("What did I do well?");
+  await debrief.getByTestId("ask-btn").click();
+  await expect(debrief.getByTestId("qa-answer")).toHaveCount(2);
+  await expect(debrief.getByText("3 questions left.")).toBeVisible();
+
   await page.getByTestId("debrief-done").click();
   await expect(page.getByRole("button", { name: /Visit .* again/ }).first()).toBeVisible();
 
@@ -69,4 +77,72 @@ test("each local starts a fresh conversation", async ({ page }) => {
   const box = await page.getByTestId("send-btn").boundingBox();
   expect(box).not.toBeNull();
   expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+});
+
+test("mediate between two locals at odds, then get mentored", async ({ page }) => {
+  await onboard(page);
+  await travelToNairobi(page);
+  await page.getByTestId("start-mediation").click();
+  const mediation = page.getByTestId("mediation");
+  await expect(mediation.getByRole("meter", { name: /Tension/ })).toBeVisible();
+  await expect(mediation.locator(".party")).toHaveCount(2);
+  const before = Number(await mediation.getByTestId("tension").getAttribute("aria-valuenow"));
+
+  // Listening to each side and asking what matters cools things down…
+  await say(page, "I can hear you're both frustrated. What matters most to each of you here?");
+  await expect(page.locator(".msg--player").last().locator(".move--good").first()).toBeVisible();
+  const after = Number(await mediation.getByTestId("tension").getAttribute("aria-valuenow"));
+  expect(after).toBeLessThan(before);
+  // …and a fair proposal, once both feel heard, settles it.
+  const settled = page.getByText(/agreed:/);
+  for (const line of [
+    "So it sounds like you both want this street to work. That makes sense — it's hard when it feels unfair.",
+    "Thank you both for explaining. What if you could both keep what matters most to you?",
+    "How about you share it and take turns, so it works for both of you?",
+  ]) {
+    if (await settled.isVisible()) break;
+    await say(page, line);
+  }
+  await expect(settled).toBeVisible();
+  await page.getByTestId("rate-4").click();
+  await page.getByTestId("get-feedback").click();
+  const debrief = page.getByTestId("debrief");
+  await expect(debrief).toBeVisible();
+  await expect(debrief.getByRole("heading", { level: 1 })).not.toBeEmpty();
+  await expect(debrief.getByText(/&/).first()).toBeVisible();
+});
+
+test("classroom: a teacher assigns an expedition, a student completes it, the class debrief shows it", async ({ page: teacher, browser }, testInfo) => {
+  await onboard(teacher, "Rivera");
+  await teacher.getByRole("navigation", { name: "Main" }).getByRole("button", { name: /Class/ }).click();
+  await teacher.getByTestId("class-name-input").fill("9B Global Citizenship");
+  await teacher.getByTestId("create-class").click();
+  const code = (await teacher.getByTestId("class-code").innerText()).trim();
+  expect(code).toMatch(/^[A-Z2-9]{6}$/);
+  await teacher.getByTestId("assign-place").selectOption("nairobi");
+  await teacher.getByTestId("assign-skill").selectOption("listening");
+  await teacher.getByTestId("add-assignment").click();
+  await expect(teacher.getByTestId("assignment-report")).toHaveCount(1);
+
+  // A student in another browser joins with the code and does the assignment.
+  const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL });
+  const student = await context.newPage();
+  await onboard(student, "Lin");
+  await student.getByRole("navigation", { name: "Main" }).getByRole("button", { name: /Class/ }).click();
+  await student.getByTestId("class-code-input").fill(code);
+  await student.getByTestId("join-class").click();
+  await expect(student.getByTestId("student-class")).toContainText("Nairobi: Listening");
+  await student.getByTestId("start-assignment").click();
+  await expect(student.getByText("Say hello in Swahili")).toBeVisible();
+  await student.getByTestId("meet-npc-1").click();
+  await say(student, "Habari! What are you working on today?");
+  await say(student, "Thank you for sharing. Take care, goodbye!");
+  await student.getByTestId("rate-3").click();
+  await student.getByTestId("get-feedback").click();
+  await expect(student.getByTestId("shared-with-class")).toContainText("Shared with 9B Global Citizenship");
+  await context.close();
+
+  await teacher.getByTestId("refresh-dashboard").click();
+  await expect(teacher.getByTestId("completed")).toHaveText("1 of 1");
+  await expect(teacher.getByTestId("assignment-report")).toContainText("Lin");
 });

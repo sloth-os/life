@@ -3,21 +3,24 @@ import { rapportTier } from "../../shared/rules.ts";
 import { SKILLS } from "../../shared/skills.ts";
 import { LENS_IDS, LENSES, type LensId } from "../../shared/world.ts";
 import { Avatar, LensTag } from "../components/ui.tsx";
+import { Postcard } from "../components/Postcard.tsx";
+import { PronounceButton } from "../components/Pronounce.tsx";
 import { canSpeak, speak } from "../lib/speech.ts";
 import { answerRecall, answerReflection, go, openExpedition, revisitPerson, toggleMission } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 import type { JournalInsight } from "../state/types.ts";
+import { LANG_TAGS, lang, lensName, plural, skillName, t, tierName, type MessageKey } from "../i18n/index.ts";
 
 type Tab = "insights" | "review" | "phrases" | "people" | "missions" | "reflections" | "places";
 
-const date = (t: number) => new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const date = (at: number) => new Date(at).toLocaleDateString(LANG_TAGS[lang()], { month: "short", day: "numeric" });
 
 function Empty({ children }: { children: ReactNode }) {
   return (
     <div className="empty">
       <p>{children}</p>
       <button type="button" className="btn btn--primary" onClick={() => go("world")}>
-        Go exploring
+        {t("journal.goExploring")}
       </button>
     </div>
   );
@@ -28,14 +31,14 @@ function Review({ due }: { due: JournalInsight[] }) {
   const [picked, setPicked] = useState<number | null>(null);
   const card = due[index];
   if (!card) {
-    return <div className="empty"><p>{due.length ? "All caught up — nice work! 🎉" : "Nothing to review right now. New insights become recall cards; review them over the coming days to make them stick."}</p></div>;
+    return <div className="empty"><p>{due.length ? t("journal.caughtUp") : t("journal.nothingToReview")}</p></div>;
   }
   const { quiz } = card.insight;
   const correct = picked === quiz.answerIndex;
   return (
     <div className="recall" data-testid="recall">
       <p className="eyebrow">
-        Card {index + 1} of {due.length} · from {card.npcName}, {card.city ?? card.placeName}
+        {t("journal.card", { n: index + 1, total: due.length, name: card.npcName, place: card.city ?? card.placeName })}
       </p>
       <h2>{quiz.question}</h2>
       <div className="recall__options">
@@ -54,7 +57,7 @@ function Review({ due }: { due: JournalInsight[] }) {
       {picked !== null ? (
         <div className="recall__feedback" role="status">
           <p>
-            <strong>{correct ? "Correct! +5 XP" : "Not quite."}</strong> {card.insight.fact}
+            <strong>{correct ? t("journal.correct") : t("journal.notQuite")}</strong> {card.insight.fact}
           </p>
           <button
             type="button"
@@ -65,7 +68,7 @@ function Review({ due }: { due: JournalInsight[] }) {
               setIndex(index + 1);
             }}
           >
-            Next
+            {t("common.next")}
           </button>
         </div>
       ) : null}
@@ -80,30 +83,30 @@ export function JournalScreen() {
   const { insights, phrases, missions, reflections } = game.journal;
   // Freeze the review queue each time the tab changes, so answering a card doesn't reshuffle it.
   const due = useMemo(() => insights.filter((j) => j.recall.dueAt <= Date.now()), [tab]);
-  const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: "insights", label: "Insights", count: insights.length },
-    { id: "review", label: "Review", count: due.length },
-    { id: "phrases", label: "Phrasebook", count: phrases.length },
-    { id: "people", label: "People", count: game.people.length },
-    { id: "missions", label: "Missions", count: missions.filter((m) => !m.doneAt).length },
-    { id: "reflections", label: "Reflections", count: reflections.length },
-    { id: "places", label: "Places", count: game.atlas.length },
+  const tabs: { id: Tab; label: MessageKey; count?: number }[] = [
+    { id: "insights", label: "journal.tabInsights", count: insights.length },
+    { id: "review", label: "journal.tabReview", count: due.length },
+    { id: "phrases", label: "journal.tabPhrases", count: phrases.length },
+    { id: "people", label: "journal.tabPeople", count: game.people.length },
+    { id: "missions", label: "journal.tabMissions", count: missions.filter((m) => !m.doneAt).length },
+    { id: "reflections", label: "journal.tabReflections", count: reflections.length },
+    { id: "places", label: "journal.tabPlaces", count: game.atlas.length },
   ];
   const shown = insights.filter((j) => lens === "all" || j.insight.lens === lens);
 
   return (
     <div className="page journal">
       <header className="page-head">
-        <h1>Field Journal</h1>
+        <h1>{t("journal.title")}</h1>
         <p className="muted">
-          {insights.length} insights · {phrases.length} phrases · {game.people.length} people · {new Set(game.atlas.map((a) => a.country).filter(Boolean)).size} countries
+          {t("journal.counts", { insights: insights.length, phrases: phrases.length, people: game.people.length, countries: new Set(game.atlas.map((a) => a.country).filter(Boolean)).size })}
         </p>
       </header>
-      <div className="tabs" role="tablist" aria-label="Journal sections">
-        {tabs.map((t) => (
-          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={tab === t.id ? "is-active" : ""} onClick={() => setTab(t.id)}>
-            {t.label}
-            {t.count ? <span className="count">{t.count}</span> : null}
+      <div className="tabs" role="tablist" aria-label={t("journal.sections")}>
+        {tabs.map((item) => (
+          <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? "is-active" : ""} onClick={() => setTab(item.id)}>
+            {t(item.label)}
+            {item.count ? <span className="count">{item.count}</span> : null}
           </button>
         ))}
       </div>
@@ -111,16 +114,16 @@ export function JournalScreen() {
       <div role="tabpanel">
         {tab === "insights" ? (
           insights.length === 0 ? (
-            <Empty>Insights appear here as locals trust you enough to share what they know.</Empty>
+            <Empty>{t("journal.emptyInsights")}</Empty>
           ) : (
             <>
-              <div className="filter-chips" role="group" aria-label="Filter by lens">
+              <div className="filter-chips" role="group" aria-label={t("journal.filterByLens")}>
                 <button type="button" className={lens === "all" ? "is-on" : ""} onClick={() => setLens("all")}>
-                  All
+                  {t("journal.all")}
                 </button>
                 {LENS_IDS.map((l) => (
                   <button key={l} type="button" className={lens === l ? "is-on" : ""} onClick={() => setLens(l)}>
-                    {LENSES[l].icon} {LENSES[l].name} ({insights.filter((j) => j.insight.lens === l).length})
+                    {LENSES[l].icon} {lensName(l)} ({insights.filter((j) => j.insight.lens === l).length})
                   </button>
                 ))}
               </div>
@@ -131,12 +134,12 @@ export function JournalScreen() {
                     <h3>{j.insight.title}</h3>
                     <p>{j.insight.fact}</p>
                     <p className="muted small">
-                      From {j.npcName} · {j.placeName}
+                      {t("journal.from", { name: j.npcName, place: j.placeName })}
                       {j.city ? `, ${j.city}` : ""} · {date(j.foundAt)}
                     </p>
                     {j.sources.length ? (
                       <p className="small">
-                        Sources:{" "}
+                        {t("journal.sources")}{" "}
                         {j.sources.map((s, i) => (
                           <span key={s.id}>
                             {i ? ", " : ""}
@@ -152,7 +155,7 @@ export function JournalScreen() {
                         ))}
                       </p>
                     ) : (
-                      <p className="muted small">General knowledge shared by a local — worth double-checking.</p>
+                      <p className="muted small">{t("journal.generalKnowledge")}</p>
                     )}
                   </li>
                 ))}
@@ -165,7 +168,7 @@ export function JournalScreen() {
 
         {tab === "phrases" ? (
           phrases.length === 0 ? (
-            <Empty>Locals sometimes teach you words in their language. They'll collect here.</Empty>
+            <Empty>{t("journal.emptyPhrases")}</Empty>
           ) : (
             <ul className="card-grid">
               {phrases.map((p) => (
@@ -181,6 +184,7 @@ export function JournalScreen() {
                       🔊
                     </button>
                   ) : null}
+                  <PronounceButton phrase={p.text} language={p.language} meaning={p.meaning} />
                 </li>
               ))}
             </ul>
@@ -189,7 +193,7 @@ export function JournalScreen() {
 
         {tab === "people" ? (
           game.people.length === 0 ? (
-            <Empty>Everyone you talk with is remembered here — and they'll remember you.</Empty>
+            <Empty>{t("journal.emptyPeople")}</Empty>
           ) : (
             <ul className="card-grid">
               {game.people.map((p) => (
@@ -204,11 +208,11 @@ export function JournalScreen() {
                     </div>
                   </div>
                   <p>
-                    <strong>{rapportTier(p.lastRapport)}</strong> · rapport {Math.round(p.lastRapport)} · {p.visits} visit{p.visits === 1 ? "" : "s"}
+                    <strong>{tierName(rapportTier(p.lastRapport))}</strong> · {t("journal.rapport", { value: Math.round(p.lastRapport) })} · {plural(p.visits, "journal.visitOne", "journal.visits")}
                   </p>
                   {p.memory ? <p className="memory">“{p.memory}”</p> : null}
                   <button type="button" className="btn btn--small" onClick={() => revisitPerson(p.key)} disabled={!game.expeditions.some((e) => e.id === p.expeditionId)}>
-                    Visit again
+                    {t("journal.visitAgain")}
                   </button>
                 </li>
               ))}
@@ -218,7 +222,7 @@ export function JournalScreen() {
 
         {tab === "missions" ? (
           missions.length === 0 ? (
-            <Empty>After each conversation your mentor suggests a small real-world mission. Try them with real people!</Empty>
+            <Empty>{t("journal.emptyMissions")}</Empty>
           ) : (
             <ul className="missions">
               {missions.map((m) => (
@@ -226,7 +230,7 @@ export function JournalScreen() {
                   <label>
                     <input type="checkbox" checked={Boolean(m.doneAt)} onChange={() => toggleMission(m.id)} />
                     <span>
-                      <strong>{m.title}</strong> <span className="muted small">· {SKILLS[m.skill].icon} {SKILLS[m.skill].name}{m.doneAt ? " · done, +20 XP" : ""}</span>
+                      <strong>{m.title}</strong> <span className="muted small">· {SKILLS[m.skill].icon} {skillName(m.skill)}{m.doneAt ? ` · ${t("journal.missionDone")}` : ""}</span>
                       <br />
                       {m.description}
                     </span>
@@ -239,21 +243,21 @@ export function JournalScreen() {
 
         {tab === "reflections" ? (
           reflections.length === 0 ? (
-            <Empty>Your self-assessments and reflections will build up here over time.</Empty>
+            <Empty>{t("journal.emptyReflections")}</Empty>
           ) : (
             <ul className="reflections">
               {reflections.map((r) => (
                 <li key={r.id} className="card">
                   <p className="muted small">
-                    {date(r.at)} · with {r.npcName}
-                    {r.city ? ` in ${r.city}` : ""} · you rated it {r.selfRating}/5
+                    {date(r.at)} · {t("journal.with", { name: r.npcName })}
+                    {r.city ? ` ${t("journal.in", { place: r.city })}` : ""} · {t("journal.youRated", { rating: r.selfRating })}
                   </p>
                   <h3>{r.headline}</h3>
-                  {r.selfNote ? <p>Your note: “{r.selfNote}”</p> : null}
+                  {r.selfNote ? <p>{t("journal.yourNote", { note: r.selfNote })}</p> : null}
                   <p>
                     <em>{r.question}</em>
                   </p>
-                  <textarea defaultValue={r.answer ?? ""} rows={2} aria-label="Your reflection" placeholder="Write a few words…" onBlur={(e) => answerReflection(r.id, e.target.value.trim())} />
+                  <textarea defaultValue={r.answer ?? ""} rows={2} aria-label={t("debrief.reflectionLabel")} placeholder={t("journal.writeFew")} onBlur={(e) => answerReflection(r.id, e.target.value.trim())} />
                 </li>
               ))}
             </ul>
@@ -262,7 +266,7 @@ export function JournalScreen() {
 
         {tab === "places" ? (
           game.atlas.length === 0 ? (
-            <Empty>Every place you visit gets a stamp in your atlas.</Empty>
+            <Empty>{t("journal.emptyPlaces")}</Empty>
           ) : (
             <ul className="places">
               {game.atlas.map((a) => (
@@ -277,9 +281,10 @@ export function JournalScreen() {
                         <LensTag key={l} lens={l} />
                       ))}
                     </p>
+                    <Postcard expeditionId={a.expeditionId} label={a.destination.label} country={a.country ?? a.destination.country} lenses={a.lenses} compact />
                   </div>
                   <button type="button" className="btn btn--small" onClick={() => openExpedition(a.expeditionId)} disabled={!game.expeditions.some((e) => e.id === a.expeditionId)}>
-                    Return
+                    {t("journal.return")}
                   </button>
                 </li>
               ))}

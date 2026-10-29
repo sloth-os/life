@@ -173,3 +173,116 @@ export const REFLECTION_QUESTIONS: Record<SkillId, string> = {
   clarity: "Where in your life do you hint at what you need instead of asking directly?",
   common_ground: "Think of someone you disagree with: what might you both want underneath the disagreement?",
 };
+
+// ── Mediation scenes (Demo AI) ─────────────────────────────────────────────
+interface SceneSide {
+  role: string;
+  position: string;
+  interest: string;
+  temperament: string;
+  /** Lines by mood: defensive while tense, opening up once heard, warm once it settles. */
+  defensive: string[];
+  opening: string;
+  warm: string;
+}
+
+export interface SceneTemplate {
+  title: string;
+  topic: string;
+  place: string;
+  situation: string;
+  shared: string;
+  a: SceneSide;
+  b: SceneSide;
+  start: [string, string];
+  agreement: string;
+  /** How the second one accepts, in their own words. */
+  accept: string;
+}
+
+export const SCENE_TEMPLATES: SceneTemplate[] = [
+  {
+    title: "Tables on the pavement",
+    topic: "a café's tables on the shared pavement",
+    place: "the corner café",
+    situation: "Outside a small café, chairs scrape as two neighbours argue over a stretch of pavement. A pram is parked half in the road.",
+    shared: "Both want the street safe and lively; neither wants it to empty out.",
+    a: {
+      role: "café owner",
+      position: "My tables need the pavement in the evenings; that's when I make my money.",
+      interest: "Rent went up and the evening trade is what keeps the café open.",
+      temperament: "Quick and proud, warms up when someone takes the business seriously.",
+      defensive: ["I've had these tables here for years. Nobody complained before.", "So I should just close early? Who pays my rent then?"],
+      opening: "Honestly? Since the rent went up, the evenings are all that keeps us going.",
+      warm: "I don't want anyone walking in the road. That's not the street I want either.",
+    },
+    b: {
+      role: "neighbour with a young daughter",
+      position: "I can't get past with the pram. The pavement is for everyone.",
+      interest: "A scooter nearly hit her and her daughter when she had to walk in the road.",
+      temperament: "Tired and blunt, softens when someone asks about her daughter.",
+      defensive: ["Every evening I end up in the road with a pram. Every evening.", "It's not about your money, it's about getting home safely."],
+      opening: "Last month a scooter nearly hit us when I had to go round the tables. I still think about it.",
+      warm: "I like the café, really. I just need a way through.",
+    },
+    start: ["Those tables have been there for years! Nobody complained before.", "Because nobody could get through to complain! I had to walk in the road again."],
+    agreement: "The café keeps its tables but leaves a clear lane by the wall, and moves two of them in after six.",
+    accept: "A clear lane by the wall, and two tables in after six? All right. I can live with that.",
+  },
+  {
+    title: "Practice after dark",
+    topic: "late-night band practice above the bakery",
+    place: "the bakery on the square",
+    situation: "By the bakery door a young musician with a guitar case and the baker in a flour-dusted apron are talking over each other.",
+    shared: "Both care about the neighbourhood: one wants a place to make music, the other a place to work and rest.",
+    a: {
+      role: "musician who rents the room upstairs",
+      position: "We only practise until eleven. That's allowed.",
+      interest: "The band has a first paid gig in two weeks, and this room is the only one they can afford.",
+      temperament: "Defensive, then eager once someone notices how much the gig matters.",
+      defensive: ["Eleven isn't late! It's allowed.", "Where else are we supposed to go? Studios cost a fortune."],
+      opening: "We've got our first real gig in two weeks. If we don't practise, we blow it.",
+      warm: "I didn't know you start at four. That's brutal.",
+    },
+    b: {
+      role: "baker",
+      position: "I start at four in the morning. I need to sleep by nine.",
+      interest: "She's run the bakery alone since her husband fell ill and is exhausted.",
+      temperament: "Sharp when tired, generous once she feels understood.",
+      defensive: ["Allowed or not, I'm the one up at four.", "I've been here twenty years. The bread doesn't bake itself."],
+      opening: "Since my husband got sick it's just me. If I don't sleep, I can't stand at the oven.",
+      warm: "A first gig, eh? Good for you. I just need my nights.",
+    },
+    start: ["We stop at eleven! That's the rule.", "And I get up at four! Whose rule covers that?"],
+    agreement: "The band practises on the two evenings the bakery is closed the next morning, and stops at nine on other nights.",
+    accept: "Loud on my two days off, quiet by nine the rest? Deal. And come and buy bread for the gig.",
+  },
+  {
+    title: "The shady spot",
+    topic: "who gets the shaded spot at the market",
+    place: "the market square",
+    situation: "Under the only tree in the market square, two stallholders have set up half on top of each other, and neither is backing down.",
+    shared: "Both want customers to linger, and the shade helps everyone's trade.",
+    a: {
+      role: "fruit seller",
+      position: "My fruit spoils in the sun. I need the shade.",
+      interest: "Last summer he lost a week's stock to the heat and still owes his supplier.",
+      temperament: "Loud but fair, likes a practical fix.",
+      defensive: ["Fruit doesn't survive the sun. Phones do.", "I was here first this morning!"],
+      opening: "Last summer I lost a whole week of mangoes to the heat. I'm still paying for it.",
+      warm: "Fine, fine. Your screen does go dark in the sun.",
+    },
+    b: {
+      role: "phone-repair stall owner",
+      position: "Nobody can see a phone screen in the sun. I need the shade too.",
+      interest: "She saved for a year to start the stall and can't afford a slow season.",
+      temperament: "Quietly stubborn, opens up when treated as a real business.",
+      defensive: ["My customers can't see their screens out there.", "You always say you were first."],
+      opening: "I saved for a year for this stall. If nobody stops, I can't make the payments.",
+      warm: "Your fruit does make people stop. They look at the phones after.",
+    },
+    start: ["Move your table, this is my spot!", "It's nobody's spot. It's the only shade there is!"],
+    agreement: "They put up a shared awning between the two stalls and split its cost.",
+    accept: "One awning over both stalls, and we split the cost? Yes. We can try that.",
+  },
+];

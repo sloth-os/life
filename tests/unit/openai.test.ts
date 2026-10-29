@@ -30,7 +30,7 @@ function streamed(content: string, finish = "stop", reasoning = "") {
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-function setup(respond: (call: Call, index: number) => Response) {
+function setup(respond: (call: Call, index: number) => Response, extra: Partial<ConstructorParameters<typeof OpenAIGameAI>[0]> = {}) {
   const calls: Call[] = [];
   const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
     const call = { url: String(input), body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown> };
@@ -39,7 +39,7 @@ function setup(respond: (call: Call, index: number) => Response) {
   };
   const client = new OpenAI({ apiKey: "test-key", baseURL: "https://gateway.test/v1", fetch: fetchImpl as typeof fetch, maxRetries: 0 });
   const logs: string[] = [];
-  return { ai: new OpenAIGameAI({ client, model: "qwen3.8-max", log: (m) => logs.push(m) }), calls, logs };
+  return { ai: new OpenAIGameAI({ client, model: "qwen3.8-max", log: (m) => logs.push(m), ...extra }), calls, logs };
 }
 
 const turnDraft: NpcTurnDraft = {
@@ -97,7 +97,7 @@ describe("OpenAIGameAI", () => {
     const { ai, logs } = setup(() => streamed(reply, "stop", "Thinking about mangoes."));
     const draft = await ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
     expect(draft).toMatchObject({ emotion: "warm", perceived_moves: ["open_question"], rapport_delta: 7 });
-    expect(logs[0]).toMatch(/turn qwen3\.8-max json_schema first-token=\d+ms total=\d+ms .* reasoning=23 finish=stop/);
+    expect(logs[0]).toMatch(/turn qwen3\.8-max json_schema enable_thinking=false first-token=\d+ms total=\d+ms .* reasoning=23 finish=stop/);
   });
 
   it("asks again once when the reply isn't JSON at all", async () => {
@@ -105,6 +105,14 @@ describe("OpenAIGameAI", () => {
     await expect(ai.coachHint(turnRequest())).resolves.toMatchObject({ skill: "empathy" });
     expect(calls).toHaveLength(2);
     expect(JSON.stringify(calls[1]!.body.messages)).toContain("wasn't valid JSON");
+  });
+
+  it("asks again once when the reply is an empty object", async () => {
+    // Seen live from qwen3.8-omni-flash: "{}" in json_schema mode, which coercion would accept.
+    const { ai, calls } = setup((_call, i) => (i === 0 ? streamed("{}") : streamed(JSON.stringify({ skill: "empathy", observation: "o", suggestion: "s", example: "e" }))));
+    await expect(ai.coachHint(turnRequest())).resolves.toMatchObject({ skill: "empathy" });
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(calls[1]!.body.messages)).toContain("That reply was empty");
   });
 
   it("steps down once when concurrent calls hit the same rejection", async () => {
@@ -117,6 +125,55 @@ describe("OpenAIGameAI", () => {
     expect(ai.jsonMode).toBe("text");
     expect(logs.filter((l) => l.includes("falling back"))).toHaveLength(2);
     expect(calls.filter((c) => !c.body.response_format)).toHaveLength(3);
+  });
+
+  it("switches thinking per task from its effort, in the server's own terms", async () => {
+    const hint = JSON.stringify({ skill: "listening", observation: "o", suggestion: "s", example: "e" });
+    const qwen = setup(() => streamed(hint), { effort: { hint: "low", debrief: "high" } });
+    await qwen.ai.coachHint(turnRequest());
+    expect(qwen.calls[0]!.body.enable_thinking).toBe(false);
+
+    const deep = setup(() => streamed(hint), { effort: { hint: "high" } });
+    await deep.ai.coachHint(turnRequest());
+    expect(deep.calls[0]!.body.enable_thinking).toBe(true);
+
+    const openai = setup(() => streamed(hint), { model: "o4-mini", effort: { hint: "xhigh" } });
+    await openai.ai.coachHint(turnRequest());
+    expect(openai.calls[0]!.body).toMatchObject({ model: "o4-mini", reasoning_effort: "high" });
+    expect(openai.calls[0]!.body).not.toHaveProperty("enable_thinking");
+
+    const other = setup(() => streamed(hint), { model: "llama-3.3-70b" });
+    await other.ai.coachHint(turnRequest());
+    expect(other.calls[0]!.body).not.toHaveProperty("enable_thinking");
+    expect(other.calls[0]!.body).not.toHaveProperty("reasoning_effort");
+
+    const leave = setup(() => streamed(hint), { thinking: "model" });
+    await leave.ai.coachHint(turnRequest());
+    expect(leave.calls[0]!.body).not.toHaveProperty("enable_thinking");
+  });
+
+  it("stops sending a thinking switch the server rejects, keeping the JSON mode", async () => {
+    const hint = JSON.stringify({ skill: "listening", observation: "o", suggestion: "s", example: "e" });
+    const { ai, calls, logs } = setup((call) =>
+      "enable_thinking" in call.body ? json({ error: { message: "Unrecognized request argument supplied: enable_thinking" } }, 400) : streamed(hint),
+    );
+    await ai.coachHint(turnRequest());
+    await ai.coachHint(turnRequest());
+    expect(calls.map((c) => "enable_thinking" in c.body)).toEqual([true, false, false]);
+    expect(ai.jsonMode).toBe("json_schema");
+    expect(ai.droppedFields).toEqual(["enable_thinking"]);
+    expect(logs.some((l) => l.includes("rejected enable_thinking"))).toBe(true);
+  });
+
+  it("uses a model per task and reports progress while it streams", async () => {
+    const { ai, calls } = setup(() => streamed(JSON.stringify(turnDraft), "stop", "Hmm, mangoes."), { models: { debrief: "qwen3.8-max", turn: "qwen3.8-omni-flash" } });
+    const progress: { thinking: number; output: string }[] = [];
+    await ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
+    await ai.createPersona({ request: { context, npc, player } }, undefined, (p) => progress.push(p)).catch(() => undefined);
+    expect(calls[0]!.body.model).toBe("qwen3.8-omni-flash");
+    expect(calls[1]!.body.model).toBe("qwen3.8-max");
+    expect(progress).toContainEqual({ thinking: 13, output: "" });
+    expect(progress.at(-1)!.output).toContain('"reply"');
   });
 
   it("reports truncated replies and maps rate limits", async () => {

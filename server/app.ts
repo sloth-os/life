@@ -1,24 +1,56 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import {
+  AskRequestSchema,
   DebriefRequestSchema,
   ExpeditionRequestSchema,
   HintRequestSchema,
+  ListenRequestSchema,
+  MediationDebriefRequestSchema,
+  MediationSceneRequestSchema,
+  MediationTurnRequestSchema,
   PersonaRequestSchema,
+  PostcardRequestSchema,
+  PronounceRequestSchema,
+  SpeakRequestSchema,
   TurnRequestSchema,
+  VOICE_MAX_SECONDS,
   type AppConfig,
+  type Heard,
+  type PronunciationResult,
 } from "../shared/schemas.ts";
+import { AssignmentInputSchema, ClassResultInputSchema, CreateClassRequestSchema, JoinClassRequestSchema } from "../shared/classroom.ts";
+import { isWav, wavDurationMs, type VoiceService } from "./ai/voice.ts";
+import type { ClassroomStore } from "./classroom/store.ts";
+import { postcardPrompt, type ImageGateway } from "./images.ts";
 import type { ServerConfig } from "./config.ts";
-import type { GameEngine } from "./game/engine.ts";
+import type { EngineEvent, GameEngine, OnEngineEvent } from "./game/engine.ts";
 import type { GroundingService } from "./grounding/index.ts";
 import { RateLimiter } from "./util/cache.ts";
 import { HttpError } from "./util/errors.ts";
+import { openEventStream, wantsEvents } from "./util/sse.ts";
 
 export interface AppDeps {
   config: ServerConfig;
   engine: GameEngine;
   grounding: GroundingService;
+  /** Voice mode: present when a voice model is configured. */
+  voice?: VoiceService;
+  /** Postcard illustrations: present when mm-gateway is configured. */
+  images?: ImageGateway;
+  /** Classroom mode: present when enabled (CLASSROOM, on by default). */
+  classroom?: ClassroomStore;
   log?: (message: string) => void;
+}
+
+/** A recorded answer: a WAV of real speech length, or a 400. */
+function decodeAudio(base64: string): Buffer {
+  const wav = Buffer.from(base64, "base64");
+  if (!isWav(wav)) throw new HttpError(400, "invalid_audio", "The recording wasn't a WAV file.");
+  const ms = wavDurationMs(wav);
+  if (ms < 300) throw new HttpError(400, "too_short", "That recording was too short — hold the button a little longer.");
+  if (ms > VOICE_MAX_SECONDS * 1000 + 500) throw new HttpError(400, "too_long", `Keep it under ${VOICE_MAX_SECONDS} seconds.`);
+  return wav;
 }
 
 function parse<S extends z.ZodType>(schema: S, value: unknown): z.infer<S> {
@@ -37,14 +69,17 @@ function abortOnClose(res: Response): AbortSignal {
 }
 
 export function createApp(deps: AppDeps): express.Express {
-  const { config, engine, grounding } = deps;
+  const { config, engine, grounding, voice, images, classroom } = deps;
   const log = deps.log ?? ((m: string) => console.error(m));
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", config.trustProxy);
 
   const api = express.Router();
-  api.use(express.json({ limit: "256kb" }));
+  // Recordings travel as base64 WAV, so voice routes take larger bodies than the rest.
+  const smallJson = express.json({ limit: "256kb" });
+  const audioJson = express.json({ limit: "4mb" });
+  api.use((req, res, next) => (req.path.startsWith("/voice/") ? audioJson : smallJson)(req, res, next));
 
   const clientConfig: AppConfig = {
     version: config.version,
@@ -55,6 +90,13 @@ export function createApp(deps: AppDeps): express.Express {
     googleMapId: config.mapsMode === "google" ? config.googleMapId : undefined,
     placeGrounding: grounding.placeGrounding,
     accessCodeRequired: Boolean(config.accessCode),
+    features: {
+      voice: Boolean(voice),
+      voiceOutput: voice && voice.canSpeak !== false ? "model" : "browser",
+      postcards: Boolean(images),
+      classroom: Boolean(classroom),
+      flyIns: config.mapsMode === "google",
+    },
   };
 
   api.get("/health", (_req, res) => {
@@ -62,7 +104,8 @@ export function createApp(deps: AppDeps): express.Express {
   });
 
   api.get("/config", (_req, res) => {
-    res.json(clientConfig);
+    // Whether the voice model can speak is learned on first use.
+    res.json({ ...clientConfig, features: { ...clientConfig.features, voiceOutput: voice && voice.canSpeak !== false ? "model" : "browser" } });
   });
 
   api.use((req, _res, next) => {
@@ -90,37 +133,48 @@ export function createApp(deps: AppDeps): express.Express {
     res.json({ results: await grounding.search(q) });
   });
 
+  /**
+   * A long model call answers with one JSON body, or, when the browser asks for
+   * `text/event-stream`, with `progress` (and `briefing`) events and then `result`.
+   */
+  async function respond<T>(req: Request, res: Response, tag: string, work: (signal: AbortSignal, onEvent?: OnEngineEvent) => Promise<T>): Promise<void> {
+    const signal = abortOnClose(res);
+    if (!wantsEvents(req)) {
+      res.json(await work(signal));
+      return;
+    }
+    const events = openEventStream(res, log, tag);
+    try {
+      const onEvent = (event: EngineEvent) => events.send(event.type, event.type === "progress" ? event.progress : event.briefing);
+      events.send("result", await work(signal, onEvent));
+    } catch (error) {
+      events.fail(error, "Something went wrong on our side. Try again.");
+    } finally {
+      events.close();
+    }
+  }
+
   api.post("/expedition", rateLimit, async (req, res) => {
     const body = parse(ExpeditionRequestSchema, req.body);
-    res.json(await engine.createExpedition(body, abortOnClose(res)));
+    await respond(req, res, "expedition", (signal, onEvent) => engine.createExpedition(body, signal, onEvent));
   });
 
   api.post("/npc/persona", rateLimit, async (req, res) => {
     const body = parse(PersonaRequestSchema, req.body);
-    res.json(await engine.createPersona(body, abortOnClose(res)));
+    await respond(req, res, "persona", (signal, onEvent) => engine.createPersona(body, signal, onEvent));
   });
 
   // Server-sent events: `reply` snapshots while the local speaks, then `result`.
   api.post("/npc/turn", rateLimit, async (req, res) => {
     const body = parse(TurnRequestSchema, req.body);
     const signal = abortOnClose(res);
-    res.status(200).set({
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-    res.flushHeaders();
-    const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const events = openEventStream(res, log, "turn");
     try {
-      const result = await engine.turn(body, (text) => send("reply", { text }), signal);
-      send("result", result);
+      events.send("result", await engine.turn(body, (text) => events.send("reply", { text }), signal));
     } catch (error) {
-      if (!(error instanceof HttpError) || error.status >= 500) log(`[turn] ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
-      const safe = error instanceof HttpError ? error : new HttpError(500, "internal", "Something went wrong mid-conversation. Try sending that again.");
-      send("error", { error: safe.code, message: safe.message, status: safe.status });
+      events.fail(error, "Something went wrong mid-conversation. Try sending that again.");
     } finally {
-      res.end();
+      events.close();
     }
   });
 
@@ -129,9 +183,144 @@ export function createApp(deps: AppDeps): express.Express {
     res.json(await engine.hint(body, abortOnClose(res)));
   });
 
+  // Server-sent events: `answer` snapshots while the mentor writes, then `result`.
+  api.post("/coach/ask", rateLimit, async (req, res) => {
+    const body = parse(AskRequestSchema, req.body);
+    const signal = abortOnClose(res);
+    const events = openEventStream(res, log, "ask");
+    try {
+      events.send("result", await engine.ask(body, (text) => events.send("answer", { text }), signal));
+    } catch (error) {
+      events.fail(error, "Your mentor lost their train of thought. Try asking again.");
+    } finally {
+      events.close();
+    }
+  });
+
   api.post("/coach/debrief", rateLimit, async (req, res) => {
     const body = parse(DebriefRequestSchema, req.body);
-    res.json(await engine.debrief(body, abortOnClose(res)));
+    await respond(req, res, "debrief", (signal, onEvent) => engine.debrief(body, signal, onEvent));
+  });
+
+  // ── Mediation scenes ────────────────────────────────────────────────────
+  api.post("/mediation/scene", rateLimit, async (req, res) => {
+    const body = parse(MediationSceneRequestSchema, req.body);
+    await respond(req, res, "scene", (signal, onEvent) => engine.createScene(body, signal, onEvent));
+  });
+
+  // Server-sent events: the first reply as it is written, then `result` with everyone's replies.
+  api.post("/mediation/turn", rateLimit, async (req, res) => {
+    const body = parse(MediationTurnRequestSchema, req.body);
+    const signal = abortOnClose(res);
+    const events = openEventStream(res, log, "mediation");
+    try {
+      events.send("result", await engine.mediationTurn(body, (text) => events.send("reply", { text }), signal));
+    } catch (error) {
+      events.fail(error, "Something went wrong mid-conversation. Try sending that again.");
+    } finally {
+      events.close();
+    }
+  });
+
+  api.post("/mediation/debrief", rateLimit, async (req, res) => {
+    const body = parse(MediationDebriefRequestSchema, req.body);
+    await respond(req, res, "debrief", (signal, onEvent) => engine.mediationDebrief(body, signal, onEvent));
+  });
+
+  // ── Voice mode ──────────────────────────────────────────────────────────
+  const requireVoice = (): VoiceService => {
+    if (!voice) throw new HttpError(404, "voice_off", "Voice mode isn't set up on this server.");
+    return voice;
+  };
+
+  api.post("/voice/speak", rateLimit, async (req, res) => {
+    const service = requireVoice();
+    const body = parse(SpeakRequestSchema, req.body);
+    const name = service.voiceFor(body.pronouns ?? "", body.seed ?? body.text);
+    const spoken = await service.speak(body.text, name, abortOnClose(res));
+    res.set({ "Content-Type": "audio/wav", "Cache-Control": "private, max-age=3600", "X-Voice": name }).send(spoken.wav);
+  });
+
+  api.post("/voice/listen", rateLimit, async (req, res) => {
+    const service = requireVoice();
+    const body = parse(ListenRequestSchema, req.body);
+    const heard = await service.listen(decodeAudio(body.audio), body.context ?? "The learner is talking with a local.", abortOnClose(res));
+    const result: Heard = { transcript: heard.transcript.trim().slice(0, 600), tone: heard.tone, pace: heard.pace, clarity: Math.max(0, Math.min(100, heard.clarity)), note: heard.note.trim().slice(0, 240) };
+    res.json(result);
+  });
+
+  api.post("/voice/pronounce", rateLimit, async (req, res) => {
+    const service = requireVoice();
+    const body = parse(PronounceRequestSchema, req.body);
+    const scored = await service.pronounce(decodeAudio(body.audio), { phrase: body.phrase, language: body.language, meaning: body.meaning }, abortOnClose(res));
+    const result: PronunciationResult = { transcript: scored.transcript.trim().slice(0, 200), score: Math.max(0, Math.min(100, scored.score)), tip: scored.tip.trim().slice(0, 300) };
+    res.json(result);
+  });
+
+  // ── Postcards ───────────────────────────────────────────────────────────
+  // Images cost more than text, so a player gets a few per hour, and each trip's postcard is kept.
+  const postcardLimit = new RateLimiter(6, 60 * 60 * 1000);
+  const painted = new Map<string, { bytes: Buffer; mimeType: string }>();
+  api.post("/postcard", rateLimit, async (req, res) => {
+    if (!images) throw new HttpError(404, "postcards_off", "Postcards aren't set up on this server.");
+    const body = parse(PostcardRequestSchema, req.body);
+    let image = painted.get(body.expeditionId);
+    if (!image) {
+      if (!postcardLimit.allow(`${req.ip ?? "unknown"}:${(req.get("x-client-id") ?? "").slice(0, 64)}`)) {
+        throw new HttpError(429, "rate_limited", "That's a lot of postcards! The printer needs a rest — try again later.");
+      }
+      image = await images.render(postcardPrompt(body), abortOnClose(res));
+      painted.set(body.expeditionId, image);
+      if (painted.size > 50) painted.delete(painted.keys().next().value!);
+    }
+    res.set({ "Content-Type": image.mimeType, "Cache-Control": "private, max-age=86400" }).send(image.bytes);
+  });
+
+  // ── Classroom ───────────────────────────────────────────────────────────
+  const requireClassroom = (): ClassroomStore => {
+    if (!classroom) throw new HttpError(404, "classroom_off", "Classroom mode isn't enabled on this server.");
+    return classroom;
+  };
+  // Creating and joining classes writes to disk: a tighter limit per IP than gameplay.
+  const classLimit = new RateLimiter(Math.max(30, config.rateLimitPer10Min), 60 * 60 * 1000);
+  const limitClasses = (req: Request, _res: Response, next: NextFunction) => {
+    if (!classLimit.allow(req.ip ?? "unknown")) throw new HttpError(429, "rate_limited", "That's a lot of classes — try again in a while.");
+    next();
+  };
+  const teacherKey = (req: Request) => req.get("x-teacher-key") ?? undefined;
+  const param = (req: Request, name: string) => String(req.params[name] ?? "");
+
+  api.post("/classes", limitClasses, (req, res) => {
+    const body = parse(CreateClassRequestSchema, req.body);
+    res.status(201).json(requireClassroom().create(body.name, body.teacherName));
+  });
+
+  api.get("/classes/:code", (req, res) => {
+    res.json(requireClassroom().view(param(req, "code")));
+  });
+
+  api.post("/classes/:code/join", limitClasses, (req, res) => {
+    const body = parse(JoinClassRequestSchema, req.body);
+    res.status(201).json(requireClassroom().join(param(req, "code"), body.name));
+  });
+
+  api.post("/classes/:code/results", rateLimit, (req, res) => {
+    requireClassroom().submit(param(req, "code"), parse(ClassResultInputSchema, req.body));
+    res.status(204).end();
+  });
+
+  api.get("/classes/:code/dashboard", (req, res) => {
+    res.json(requireClassroom().dashboard(param(req, "code"), teacherKey(req)));
+  });
+
+  api.post("/classes/:code/assignments", rateLimit, (req, res) => {
+    const body = parse(AssignmentInputSchema, req.body);
+    res.status(201).json(requireClassroom().addAssignment(param(req, "code"), teacherKey(req), body));
+  });
+
+  api.delete("/classes/:code/assignments/:id", (req, res) => {
+    requireClassroom().removeAssignment(param(req, "code"), teacherKey(req), param(req, "id"));
+    res.status(204).end();
   });
 
   api.use((_req, res) => {

@@ -18,8 +18,9 @@
   --shadow-sm: 0 1px 2px rgba(29, 36, 51, 0.06);
   --shadow: 0 1px 2px rgba(29, 36, 51, 0.06), 0 10px 30px rgba(29, 36, 51, 0.1);
   --radius: 14px;
-  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
-  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* "Literata" is only a subset with the macron letters (index.html), which Fraunces misdraws. */
+  --font-display: "Literata", "Fraunces", Georgia, "Times New Roman", "Noto Sans SC", serif;
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
   --text-scale: 1;
   color-scheme: light;
 }
@@ -683,6 +684,10 @@ textarea:focus {
   gap: 8px;
 }
 
+.search__row .btn {
+  white-space: nowrap;
+}
+
 .results {
   list-style: none;
   margin: 8px 0 0;
@@ -1121,6 +1126,29 @@ textarea:focus {
   padding: 16px;
 }
 
+.overlay--flyin {
+  background: #0b1220;
+  backdrop-filter: none;
+  place-items: end start;
+}
+
+.flyin {
+  position: absolute;
+  inset: 0;
+}
+
+.flyin__map {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.overlay--flyin .overlay__card {
+  position: relative;
+  margin: 0 0 8px 8px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
 .overlay__card {
   background: var(--surface);
   border-radius: 18px;
@@ -1128,6 +1156,27 @@ textarea:focus {
   width: min(440px, 100%);
   box-shadow: var(--shadow);
   animation: rise 0.3s ease;
+}
+
+.local-card--pending {
+  --lens-color: var(--line);
+  min-height: 7.5rem;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(100deg, var(--surface-2) 30%, var(--surface) 50%, var(--surface-2) 70%) 0 0 / 300% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .local-card--pending {
+    animation: none;
+  }
 }
 
 .scout-steps {
@@ -1597,6 +1646,26 @@ textarea:focus {
   flex: 1;
   min-height: 46px;
   max-height: 160px;
+}
+
+.delivery {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-3, var(--ink-2));
+}
+
+.voice-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 6px 2px 0;
+  font-size: 0.86rem;
+  color: var(--ink-2);
+}
+
+.mic.is-on {
+  box-shadow: 0 0 0 calc(2px + var(--level, 0) * 10px) color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .mic.is-on {
@@ -2340,6 +2409,27 @@ textarea:focus {
     border-top: 1px solid var(--line);
   }
 
+  /* Mediation on a phone: the two parties side by side, the tension, little else. */
+  .mediation__scene {
+    padding: 10px 14px;
+    gap: 6px;
+  }
+
+  .mediation__scene > .scene,
+  .mediation__scene > .muted,
+  .mediation__scene > h2,
+  .party__position {
+    display: none;
+  }
+
+  .parties {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .party {
+    padding: 8px;
+  }
+
   .chat__head {
     padding: 8px 14px;
   }
@@ -2418,4 +2508,332 @@ textarea:focus {
   .debrief-head {
     flex-direction: column;
   }
+}
+
+/* Pronunciation practice */
+.pronounce {
+  flex-basis: 100%;
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pronounce .btn.is-recording {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pronounce__result {
+  margin: 0;
+  font-size: 0.88rem;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.pronounce__result--great strong {
+  color: var(--good, #1f7a4d);
+}
+
+.pronounce__result--close strong {
+  color: var(--accent-2);
+}
+
+/* Postcards */
+.postcard {
+  margin: 8px 0 0;
+}
+
+.postcard img {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 8px solid #fffdf8;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+  transform: rotate(-0.6deg);
+}
+
+.postcard--compact img {
+  max-width: 220px;
+  border-width: 4px;
+  margin-top: 8px;
+}
+
+.postcard figcaption {
+  margin-top: 8px;
+}
+
+.postcard-status {
+  margin: 8px 0 0;
+}
+
+/* Mentor follow-up questions */
+.qa {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.qa__q {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.qa__q::before {
+  content: "You: ";
+  color: var(--ink-3, var(--ink-2));
+  font-weight: 500;
+}
+
+.qa__a {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  white-space: pre-wrap;
+}
+
+.mentor-chat .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.ask-form input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Mediation scenes */
+.mediation-card {
+  margin-top: 16px;
+  border-left: 5px solid var(--accent-2);
+}
+
+.mediation-card h3 {
+  margin: 4px 0;
+}
+
+.mediation__scene {
+  overflow-y: auto;
+  padding: 20px;
+  background: var(--surface-2);
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.mediation__scene h2 {
+  margin: 0;
+  font-family: var(--font-display);
+}
+
+.parties {
+  display: grid;
+  gap: 10px;
+}
+
+.party {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid hsl(var(--party-hue) 55% 50%);
+}
+
+.party h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.party p {
+  margin: 2px 0;
+}
+
+.party__position {
+  font-style: italic;
+}
+
+.party__trust {
+  margin-top: 6px;
+}
+
+.tension {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  align-items: center;
+}
+
+.tension__track {
+  grid-column: 1 / -1;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4caf7d, #e0b341 45%, #d9573b);
+  position: relative;
+  overflow: hidden;
+}
+
+.tension__fill {
+  height: 100%;
+  border-right: 3px solid var(--ink);
+  background: transparent;
+  transition: width 0.4s ease;
+}
+
+.msg__name {
+  margin: 0 0 2px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.msg--party-b .bubble {
+  background: color-mix(in srgb, var(--accent-2) 14%, var(--surface-2));
+}
+
+/* Classroom */
+.classroom__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.class-form {
+  display: grid;
+  gap: 10px;
+}
+
+.class-code {
+  font-size: 1.1rem;
+}
+
+.class-code strong {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 1.6rem;
+  letter-spacing: 0.18em;
+  margin-left: 6px;
+  padding: 2px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.assignments,
+.reports {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.assignment {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.assignment h3,
+.report h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.assign-form {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.report-head {
+  align-items: center;
+  gap: 10px;
+}
+
+.report-head h3 {
+  margin: 8px 0;
+}
+
+.report__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.report__skills {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.report__skills div {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.report__skills dt {
+  font-size: 0.86rem;
+}
+
+.report__skills dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.report__bar {
+  display: inline-block;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent-2);
+  max-width: 70%;
+}
+
+.report__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.report__table th,
+.report__table td {
+  text-align: left;
+  padding: 6px 4px;
+  border-top: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.notice--error {
+  border-color: var(--danger, #c0392b);
 }

@@ -3,6 +3,7 @@ import { HINTS_PER_ENCOUNTER, PLAYER_MESSAGE_MAX, TURN_SOFT_CAP } from "../../sh
 import type { AppConfig, Expedition, NpcCard } from "../../shared/schemas.ts";
 import { SKILLS } from "../../shared/skills.ts";
 import { LENSES, SCENARIOS, type EmotionId } from "../../shared/world.ts";
+import { DeliveryChip, MicButton, ReflectionForm, VoiceStatus, isSendKey, useVoiceInput } from "../components/conversation.tsx";
 import { Avatar, EmotionChip, LensTag, MoveChips, RapportMeter, Spinner } from "../components/ui.tsx";
 import { canListen, listen } from "../lib/speech.ts";
 import { createSceneView } from "../map/index.ts";
@@ -10,6 +11,7 @@ import type { SceneView } from "../map/types.ts";
 import { abandonEncounter, leaveEncounter, requestHint, sendMessage, submitReflection } from "../state/actions.ts";
 import { useGame } from "../state/store.ts";
 import type { EncounterState } from "../state/types.ts";
+import { lensName, scenarioName, skillName, t } from "../i18n/index.ts";
 
 /** Street View in Google mode; otherwise a photo of the place from Wikipedia, or an illustrated card. */
 function Scene({ config, expedition, npc }: { config: AppConfig; expedition: Expedition; npc: NpcCard }) {
@@ -63,7 +65,7 @@ function Scene({ config, expedition, npc }: { config: AppConfig; expedition: Exp
       <div ref={ref} className={`scene-frame__pano${mode === "streetview" ? "" : " is-hidden"}`} />
       {mode !== "streetview" ? (
         <div className="scene-card" style={photo ? ({ backgroundImage: `url("${photo.src}")` } as CSSProperties) : undefined}>
-          {mode === "loading" ? <Spinner label="Finding a street view…" /> : null}
+          {mode === "loading" ? <Spinner label={t("encounter.findingStreetView")} /> : null}
           {!photo && mode === "card" ? (
             <span className="scene-card__icon" aria-hidden="true">
               {lens.icon}
@@ -79,7 +81,7 @@ function Scene({ config, expedition, npc }: { config: AppConfig; expedition: Exp
         </span>
         {photo ? (
           <a href={photo.page} target="_blank" rel="noreferrer" className="scene-caption__credit">
-            Photo via Wikipedia
+            {t("encounter.photoCredit")}
           </a>
         ) : null}
       </div>
@@ -88,10 +90,10 @@ function Scene({ config, expedition, npc }: { config: AppConfig; expedition: Exp
 }
 
 const END_TEXT: Record<string, (name: string) => string> = {
-  farewell: () => "You said goodbye.",
-  walked_away: (name) => `${name} walked away.`,
-  turn_limit: (name) => `${name} had to get back to their day.`,
-  left: () => "You ended the conversation.",
+  farewell: () => t("encounter.endFarewell"),
+  walked_away: (name) => t("encounter.endWalkedAway", { name }),
+  turn_limit: (name) => t("encounter.endTurnLimit", { name }),
+  left: () => t("encounter.endLeft"),
 };
 
 /** "wipes her hands" → "Amina wipes her hands" (unless the model already named them). */
@@ -110,7 +112,7 @@ function Transcript({ encounter, npc }: { encounter: EncounterState; npc: NpcCar
   const firstName = encounter.persona.name.split(" ")[0];
 
   return (
-    <ol className="transcript" ref={ref} aria-live="polite" aria-label="Conversation">
+    <ol className="transcript" ref={ref} aria-live="polite" aria-label={t("encounter.conversation")}>
       {encounter.transcript.map((entry, i) =>
         entry.speaker === "npc" ? (
           <li key={i} className="msg msg--npc">
@@ -128,10 +130,10 @@ function Transcript({ encounter, npc }: { encounter: EncounterState; npc: NpcCar
                 return insight ? (
                   <div key={id} className="insight-pop" style={{ "--lens-color": LENSES[insight.lens].color } as CSSProperties}>
                     <span className="eyebrow">
-                      {LENSES[insight.lens].icon} Insight unlocked · {LENSES[insight.lens].name}
+                      {LENSES[insight.lens].icon} {t("encounter.insightUnlocked", { lens: lensName(insight.lens) })}
                     </span>
                     <strong>{insight.title}</strong>
-                    <span className="muted small">Saved to your field journal</span>
+                    <span className="muted small">{t("encounter.savedToJournal")}</span>
                   </div>
                 ) : null;
               })}
@@ -141,6 +143,7 @@ function Transcript({ encounter, npc }: { encounter: EncounterState; npc: NpcCar
           <li key={i} className="msg msg--player">
             <div className="msg__body">
               <p className="bubble">{entry.text}</p>
+              {entry.delivery ? <DeliveryChip delivery={entry.delivery} /> : null}
               <MoveChips moves={entry.moves ?? []} />
             </div>
           </li>
@@ -156,7 +159,7 @@ function Transcript({ encounter, npc }: { encounter: EncounterState; npc: NpcCar
                 <span className="caret" aria-hidden="true" />
               </p>
             ) : (
-              <p className="bubble typing" aria-label={`${firstName} is thinking`}>
+              <p className="bubble typing" aria-label={t("encounter.isThinking", { name: firstName ?? "" })}>
                 <span />
                 <span />
                 <span />
@@ -177,34 +180,39 @@ function Coach({ encounter, onUse, dismissed, onDismiss }: { encounter: Encounte
     <div className="coach">
       {latest ? (
         <div className="coach__hint" role="note">
-          <button type="button" className="icon-btn" aria-label="Hide tip" onClick={onDismiss}>
+          <button type="button" className="icon-btn" aria-label={t("coach.hide")} onClick={onDismiss}>
             ×
           </button>
           <p className="eyebrow">
-            {SKILLS[latest.skill].icon} Coach · {SKILLS[latest.skill].name}
+            {SKILLS[latest.skill].icon} {t("coach.label", { skill: skillName(latest.skill) })}
           </p>
           <p>{latest.observation}</p>
           <p>
             <strong>{latest.suggestion}</strong>
           </p>
           {latest.example ? (
-            <button type="button" className="coach__example" onClick={() => onUse(latest.example)} title="Put this in your message box">
-              Try: “{latest.example}”
+            <button type="button" className="coach__example" onClick={() => onUse(latest.example)} title={t("coach.useExample")}>
+              {t("coach.try", { example: latest.example })}
             </button>
           ) : null}
         </div>
       ) : null}
       <button type="button" className="btn btn--small" onClick={() => void requestHint()} disabled={left <= 0 || loading || encounter.awaiting} data-testid="coach-btn">
-        {loading ? <Spinner /> : "💡"} Coach{left > 0 ? ` (${left} left)` : " — no hints left"}
+        {loading ? <Spinner /> : "💡"} {left > 0 ? t("coach.button", { left }) : t("coach.none")}
       </button>
     </div>
   );
 }
 
 function Composer({ encounter }: { encounter: EncounterState }) {
-  const settings = useGame().settings;
+  const { settings } = useGame();
   const [draft, setDraft] = useState("");
   const [listening, setListening] = useState<null | (() => void)>(null);
+  // Voice mode through the server's voice model: record, then the model hears what was said and how.
+  const voice = useVoiceInput(`The learner is talking with ${encounter.persona.name} (${encounter.persona.role}) at ${encounter.persona.placeName}.`, (transcript) => {
+    setDraft(transcript);
+    inputRef.current?.focus();
+  });
   // Hints already read: a tip folds away once you act on it (or close it).
   const [dismissedHints, setDismissedHints] = useState(encounter.hints.length);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -216,15 +224,20 @@ function Composer({ encounter }: { encounter: EncounterState }) {
     const text = draft.trim();
     if (!text || encounter.awaiting) return;
     listening?.();
+    const { delivery, spoken } = voice;
     setDraft("");
+    voice.setDelivery(null);
     setDismissedHints(encounter.hints.length);
-    const ok = await sendMessage(text);
-    if (!ok) setDraft(text);
+    const ok = await sendMessage(text, spoken);
+    if (!ok) {
+      setDraft(text);
+      voice.setDelivery(delivery);
+    }
     inputRef.current?.focus();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (isSendKey(event)) {
       event.preventDefault();
       void submit();
     }
@@ -260,74 +273,44 @@ function Composer({ encounter }: { encounter: EncounterState }) {
           value={draft}
           maxLength={PLAYER_MESSAGE_MAX}
           rows={2}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (!e.target.value.trim()) voice.setDelivery(null);
+          }}
           onKeyDown={onKeyDown}
-          placeholder={`Say something to ${firstName}…`}
-          aria-label={`Your message to ${firstName}`}
+          placeholder={t("composer.placeholder", { name: firstName ?? "" })}
+          aria-label={t("composer.label", { name: firstName ?? "" })}
           enterKeyHint="send"
           disabled={encounter.awaiting}
           autoFocus
         />
-        {settings.voiceInput && canListen() ? (
-          <button type="button" className={`icon-btn mic${listening ? " is-on" : ""}`} onClick={toggleMic} aria-pressed={Boolean(listening)} aria-label={listening ? "Stop dictation" : "Speak your message"}>
+        {settings.voiceInput && voice.available ? (
+          <MicButton input={voice} disabled={encounter.awaiting} />
+        ) : settings.voiceInput && canListen() ? (
+          <button type="button" className={`icon-btn mic${listening ? " is-on" : ""}`} onClick={toggleMic} aria-pressed={Boolean(listening)} aria-label={listening ? t("composer.stopDictation") : t("composer.speak")}>
             🎙️
           </button>
         ) : null}
         <button type="submit" className="btn btn--primary" disabled={!draft.trim() || encounter.awaiting} data-testid="send-btn">
-          Send
+          {t("composer.send")}
         </button>
       </div>
+      <VoiceStatus input={voice} />
       <div className="composer__meta">
         <span className="muted small">
-          {turns < TURN_SOFT_CAP ? `${turns} of ~${TURN_SOFT_CAP} turns` : "Time to wrap up"} · Enter to send
+          {turns < TURN_SOFT_CAP ? t("composer.turns", { turns, cap: TURN_SOFT_CAP }) : t("composer.wrapUp")} · {t("composer.enterToSend")}
         </span>
         <button type="button" className="link-btn small" onClick={() => leaveEncounter()} disabled={encounter.awaiting}>
-          End conversation
+          {t("composer.end")}
         </button>
       </div>
     </form>
   );
 }
 
-const RATING_LABELS = ["Rough", "Shaky", "Okay", "Good", "Great"];
-
 function Reflection({ encounter }: { encounter: EncounterState }) {
-  const loading = useGame().ui.debriefLoading;
-  const [rating, setRating] = useState(0);
-  const [note, setNote] = useState("");
   const name = encounter.persona.name.split(" ")[0]!;
-  return (
-    <div className="ended">
-      <p className="ended__reason" role="status">
-        {(END_TEXT[encounter.endReason ?? "left"] ?? END_TEXT.left!)(name)}
-      </p>
-      <form
-        className="reflect"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (rating) void submitReflection(rating, note);
-        }}
-      >
-        <h3>Before your mentor weighs in…</h3>
-        <p>How do you think that conversation went?</p>
-        <div className="stars" role="radiogroup" aria-label="Your self-rating">
-          {RATING_LABELS.map((label, i) => (
-            <button key={label} type="button" role="radio" aria-checked={rating === i + 1} className={rating >= i + 1 ? "is-on" : ""} onClick={() => setRating(i + 1)} data-testid={`rate-${i + 1}`}>
-              <span aria-hidden="true">★</span>
-              <span className="stars__label">{label}</span>
-            </button>
-          ))}
-        </div>
-        <label className="field">
-          <span>What would you do differently? (optional)</span>
-          <textarea value={note} maxLength={400} rows={2} onChange={(e) => setNote(e.target.value)} />
-        </label>
-        <button type="submit" className="btn btn--primary" disabled={!rating || loading} data-testid="get-feedback">
-          {loading ? <Spinner label="Your mentor is reviewing the conversation…" /> : "Get feedback"}
-        </button>
-      </form>
-    </div>
-  );
+  return <ReflectionForm reason={(END_TEXT[encounter.endReason ?? "left"] ?? END_TEXT.left!)(name)} onSubmit={(rating, note) => void submitReflection(rating, note)} />;
 }
 
 export function EncounterScreen() {
@@ -339,9 +322,9 @@ export function EncounterScreen() {
   if (!encounter || !expedition || !npc) {
     return (
       <div className="page">
-        <p>No conversation in progress.</p>
+        <p>{t("encounter.none")}</p>
         <button type="button" className="btn btn--primary" onClick={() => abandonEncounter()}>
-          Back
+          {t("common.back")}
         </button>
       </div>
     );
@@ -358,16 +341,16 @@ export function EncounterScreen() {
   return (
     <div className="encounter">
       <Scene config={game.ui.config!} expedition={expedition} npc={npc} />
-      <section className="chat" aria-label={`Conversation with ${persona.name}`}>
+      <section className="chat" aria-label={t("encounter.conversationWith", { name: persona.name })}>
         <header className="chat__head">
           <button
             type="button"
             className="link-btn back"
             onClick={() => {
-              if (!hasSpoken || encounter.status !== "active" || window.confirm("Leave without feedback? This conversation won't count.")) abandonEncounter();
+              if (!hasSpoken || encounter.status !== "active" || window.confirm(t("encounter.leaveConfirm"))) abandonEncounter();
             }}
           >
-            ← Locals
+            ← {t("encounter.backToLocals")}
           </button>
           <div className="chat__who">
             <Avatar name={persona.name} hue={npc.hue} size={48} />
@@ -384,14 +367,14 @@ export function EncounterScreen() {
           <RapportMeter value={encounter.rapport} delta={lastDelta} thresholds={persona.insights.map((i) => i.threshold)} />
           <div className="chat__goal">
             <span className="tag">
-              {scenario.icon} {scenario.name}
+              {scenario.icon} {scenarioName(npc.scenario)}
             </span>
             <LensTag lens={npc.lens} />
             <span className="muted small">
-              📗 {found}/{persona.insights.length} insights
+              📗 {t("encounter.insights", { found, total: persona.insights.length })}
             </span>
             <p>
-              <strong>Your goal:</strong> {npc.goal}
+              <strong>{t("encounter.yourGoal")}</strong> {npc.goal}
             </p>
           </div>
         </header>

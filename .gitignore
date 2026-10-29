@@ -7,3 +7,6 @@ playwright-report/
 playwright-report-real/
 *.log
 .DS_Store
+
+# Classroom data (DATA_DIR)
+data/

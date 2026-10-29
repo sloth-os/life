@@ -2,6 +2,7 @@
 import { POSTCARDS } from "../../shared/destinations.ts";
 import {
   HINTS_PER_ENCOUNTER,
+  MEDIATION_STARTING_RAPPORT,
   calibrationGap,
   encounterXp,
   initialSkillProfile,
@@ -9,12 +10,15 @@ import {
   scheduleRecall,
   updateSkill,
 } from "../../shared/rules.ts";
-import type { Destination, Expedition, ExpeditionContext, NpcCard, NpcTurn, Persona, PlayerContext } from "../../shared/schemas.ts";
+import type { Debrief, Delivery, Destination, Expedition, ExpeditionContext, MediationScene, NpcCard, NpcTurn, PartyId, Persona, PlayerContext, PlayerTurn, TranscriptEntry } from "../../shared/schemas.ts";
 import { SKILL_IDS, skillLevelName } from "../../shared/skills.ts";
+import type { ScenarioId } from "../../shared/world.ts";
+import type { Assignment, ClassResultInput } from "../../shared/classroom.ts";
 import { ApiError, api, setAccessCode } from "../lib/api.ts";
-import { speak } from "../lib/speech.ts";
+import { voiceLine } from "../lib/voice.ts";
 import { store } from "./store.ts";
-import type { DebriefResult, EncounterState, GameState, PlayerProfile, Screen, Settings, Toast } from "./types.ts";
+import type { ClassroomSave, DebriefResult, EncounterState, GameState, MediationState, PlayerProfile, Screen, Settings, Toast } from "./types.ts";
+import { lang, placeName, t, type MessageKey } from "../i18n/index.ts";
 
 // ── Small helpers ────────────────────────────────────────────────────────
 let toastSeq = 0;
@@ -29,8 +33,42 @@ export function dismissToast(id: number): void {
   store.ui({ toasts: store.get().ui.toasts.filter((t) => t.id !== id) });
 }
 
-function message(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
+/** Server errors the player sees, in their language (the server's English text otherwise). */
+const ERROR_MESSAGES: Partial<Record<string, MessageKey>> = {
+  offline: "error.offline",
+  stream_ended: "error.streamEnded",
+  rate_limited: "error.rateLimited",
+  ai_busy: "error.aiBusy",
+  ai_unavailable: "error.aiUnavailable",
+  ai_unreachable: "error.aiUnreachable",
+  ai_auth: "error.aiAuth",
+  ai_output: "error.aiOutput",
+  ai_refusal: "error.aiRefusal",
+  encounter_over: "error.encounterOver",
+  access_code: "error.accessCode",
+  too_short: "error.tooShort",
+  too_long: "error.tooLong",
+  invalid_audio: "error.invalidAudio",
+  voice_off: "error.voiceOff",
+  images_busy: "error.imagesBusy",
+  images_failed: "error.imagesFailed",
+  images_refused: "error.imagesFailed",
+  images_timeout: "error.imagesTimeout",
+  postcards_off: "error.postcardsOff",
+  class_not_found: "error.classNotFound",
+  not_teacher: "error.notTeacher",
+  class_full: "error.classFull",
+  not_in_class: "error.notInClass",
+  assignment_gone: "error.assignmentGone",
+  mentor_done: "error.mentorDone",
+  internal: "error.internal",
+};
+
+export function message(error: unknown): string {
+  if (error instanceof ApiError) {
+    const key = ERROR_MESSAGES[error.code];
+    return key ? t(key) : error.message;
+  }
   if (error instanceof Error) return error.message;
   return String(error);
 }
@@ -52,6 +90,7 @@ export function playerContext(s: GameState): PlayerContext {
     focusSkill: p.focusSkill,
     skills: Object.fromEntries(SKILL_IDS.map((id) => [id, s.progress.skills[id].rating])),
     recentScenarios: s.progress.recentScenarios.slice(-8),
+    language: lang(),
   };
 }
 
@@ -106,13 +145,6 @@ export function setFocusSkill(focusSkill: PlayerProfile["focusSkill"]): void {
 }
 
 // ── Expeditions ──────────────────────────────────────────────────────────
-export const SCOUT_STEPS = [
-  "Flying in…",
-  "Checking the weather and local time…",
-  "Finding places where people gather…",
-  "Reading up on history, culture and livelihoods…",
-  "Meeting the locals…",
-];
 
 export function surpriseDestination(s: GameState): Destination {
   const visited = new Set(s.atlas.map((a) => a.destination.postcardId).filter(Boolean));
@@ -124,13 +156,23 @@ export function surpriseDestination(s: GameState): Destination {
 export async function startExpedition(destination: Destination): Promise<void> {
   const s = store.get();
   if (s.ui.busy || !s.player) return;
-  store.ui({ busy: { kind: "expedition", label: destination.label, step: 0 } });
-  const timer = setInterval(() => {
+  store.ui({ busy: { kind: "expedition", label: placeName(destination), destination: { lat: destination.lat, lng: destination.lng }, startedAt: Date.now(), progress: null, briefing: null } });
+  const patchBusy = (patch: Partial<NonNullable<GameState["ui"]["busy"]>>) => {
     const busy = store.get().ui.busy;
-    if (busy) store.ui({ busy: { ...busy, step: Math.min(busy.step + 1, SCOUT_STEPS.length - 1) } });
-  }, 2200);
+    if (busy) store.ui({ busy: { ...busy, ...patch } });
+  };
   try {
-    const expedition = await api.expedition({ destination, player: playerContext(s) });
+    const expedition = await api.expedition(
+      { destination, player: playerContext(s) },
+      {
+        onProgress: (progress) => patchBusy({ progress }),
+        // Two-stage arrival: read the briefing while the Game Master is still writing the locals.
+        onBriefing: (briefing) => {
+          patchBusy({ briefing });
+          go("expedition");
+        },
+      },
+    );
     store.set((st) => ({
       ...st,
       expeditions: [expedition, ...st.expeditions.filter((e) => e.id !== expedition.id)],
@@ -151,10 +193,10 @@ export async function startExpedition(destination: Destination): Promise<void> {
     }));
     prefetchPersonas(expedition);
   } catch (error) {
+    const briefed = Boolean(store.get().ui.busy?.briefing);
     store.ui({ busy: null });
-    toast("error", "Couldn't start the expedition", message(error));
-  } finally {
-    clearInterval(timer);
+    if (briefed) go("world");
+    toast("error", t("toast.expeditionFailed"), message(error));
   }
 }
 
@@ -162,7 +204,7 @@ export function openExpedition(expeditionId: string): void {
   const s = store.get();
   const expedition = s.expeditions.find((e) => e.id === expeditionId);
   if (!expedition) {
-    toast("info", "That trip is no longer saved", "Start a new expedition to the same place from the world map.");
+    toast("info", t("toast.tripGone"), t("toast.tripGoneText"));
     return;
   }
   if (s.active.expeditionId !== expeditionId) {
@@ -248,9 +290,9 @@ export async function meet(npcId: string): Promise<void> {
       awaiting: false,
     };
     store.set((st) => ({ ...st, active: { ...st.active, encounter, debrief: null }, ui: { ...st.ui, screen: "encounter" } }));
-    if (store.get().settings.voiceOutput) speak(opening.text);
+    sayAloud(opening.text, base, expedition.id, npc.id);
   } catch (error) {
-    toast("error", `Couldn't find ${npc.name}`, message(error));
+    toast("error", t("expedition.couldntFind", { name: npc.name }), message(error));
   }
 }
 
@@ -276,15 +318,16 @@ function encounterBase(s: GameState, encounter: EncounterState) {
 let turnAbort: AbortController | null = null;
 
 /** Send the player's line; returns false if it couldn't be delivered (so the UI keeps the draft). */
-export async function sendMessage(text: string): Promise<boolean> {
+/** `delivery` is how the line sounded when it was spoken (voice mode). */
+export async function sendMessage(text: string, delivery?: Delivery): Promise<boolean> {
   const s = store.get();
   const encounter = s.active.encounter;
   const line = text.trim();
   if (!encounter || encounter.status !== "active" || encounter.awaiting || !line) return false;
-  const request = { ...encounterBase(s, encounter), playerMessage: line };
+  const request = { ...encounterBase(s, encounter), playerMessage: line, playerDelivery: delivery };
   const expedition = s.expeditions.find((e) => e.id === encounter.expeditionId)!;
 
-  patchEncounter((e) => ({ ...e, transcript: [...e.transcript, { speaker: "player", text: line }], awaiting: true, streaming: "" }));
+  patchEncounter((e) => ({ ...e, transcript: [...e.transcript, { speaker: "player", text: line, delivery }], awaiting: true, streaming: "" }));
   turnAbort = new AbortController();
   try {
     const result = await api.turn(request, (reply) => patchEncounter((e) => ({ ...e, streaming: reply })), turnAbort.signal);
@@ -343,14 +386,14 @@ export async function sendMessage(text: string): Promise<boolean> {
       };
     });
     // Insights and phrases appear inline in the conversation; no toasts competing for attention.
-    if (store.get().settings.voiceOutput) speak(result.reply);
+    sayAloud(result.reply, encounter.persona, encounter.expeditionId, encounter.npcId);
     return true;
   } catch (error) {
     patchEncounter((e) => {
       const transcript = e.transcript.at(-1)?.speaker === "player" ? e.transcript.slice(0, -1) : e.transcript;
       return { ...e, transcript, awaiting: false, streaming: null };
     });
-    if (!isAbort(error)) toast("error", "Message not delivered", message(error));
+    if (!isAbort(error)) toast("error", t("toast.notDelivered"), message(error));
     return false;
   } finally {
     turnAbort = null;
@@ -366,10 +409,287 @@ export async function requestHint(): Promise<void> {
     const hint = await api.hint(encounterBase(s, encounter));
     patchEncounter((e) => ({ ...e, hints: [...e.hints, hint] }));
   } catch (error) {
-    toast("error", "The coach couldn't help just now", message(error));
+    toast("error", t("toast.coachFailed"), message(error));
   } finally {
     store.ui({ hintLoading: false });
   }
+}
+
+// ── Mediation scenes ─────────────────────────────────────────────────────
+let mediationAbort: AbortController | null = null;
+
+function patchMediation(fn: (m: MediationState) => MediationState): void {
+  store.set((s) => (s.active.mediation ? { ...s, active: { ...s.active, mediation: fn(s.active.mediation) } } : s));
+}
+
+/** Step into a disagreement between two locals of the current expedition (or back into an unfinished one). */
+export async function startMediation(): Promise<void> {
+  const s = store.get();
+  const expedition = currentExpedition(s);
+  if (!expedition || !s.player || s.ui.sceneLoading) return;
+  const existing = s.active.mediation;
+  if (existing && existing.expeditionId === expedition.id && existing.status !== "debriefed") {
+    go("mediation");
+    return;
+  }
+  store.ui({ sceneLoading: true });
+  try {
+    const scene = await api.mediationScene({ context: contextOf(expedition), player: playerContext(s) });
+    const mediation: MediationState = {
+      id: scene.id,
+      expeditionId: expedition.id,
+      scene,
+      transcript: [],
+      tension: scene.startTension,
+      rapport: { a: MEDIATION_STARTING_RAPPORT, b: MEDIATION_STARTING_RAPPORT },
+      status: "active",
+      startedAt: Date.now(),
+      streaming: null,
+      awaiting: false,
+    };
+    store.set((st) => ({ ...st, active: { ...st.active, mediation, debrief: null }, ui: { ...st.ui, sceneLoading: false, screen: "mediation" } }));
+    const last = scene.opening.at(-1)!;
+    sayAloud(last.text, partyOf(scene, last.who), expedition.id, `${scene.id}:${last.who}`);
+  } catch (error) {
+    store.ui({ sceneLoading: false });
+    toast("error", t("toast.sceneFailed"), message(error));
+  }
+}
+
+const partyOf = (scene: MediationScene, who: PartyId) => scene.parties[who === "a" ? 0 : 1];
+
+export async function sendMediationMessage(text: string, delivery?: Delivery): Promise<boolean> {
+  const s = store.get();
+  const mediation = s.active.mediation;
+  const line = text.trim();
+  if (!mediation || mediation.status !== "active" || mediation.awaiting || !line) return false;
+  const expedition = s.expeditions.find((e) => e.id === mediation.expeditionId);
+  if (!expedition) return false;
+  const request = {
+    context: contextOf(expedition),
+    scene: mediation.scene,
+    player: playerContext(s),
+    transcript: mediation.transcript,
+    tension: mediation.tension,
+    rapport: mediation.rapport,
+    playerMessage: line,
+    playerDelivery: delivery,
+  };
+  patchMediation((m) => ({ ...m, transcript: [...m.transcript, { speaker: "player", text: line, delivery }], awaiting: true, streaming: "" }));
+  mediationAbort = new AbortController();
+  try {
+    const result = await api.mediationTurn(request, (reply) => patchMediation((m) => ({ ...m, streaming: reply })), mediationAbort.signal);
+    patchMediation((m) => {
+      const transcript = [...m.transcript];
+      const last = transcript.at(-1);
+      if (last?.speaker === "player") transcript[transcript.length - 1] = { ...last, moves: result.moves, reactions: result.reactions };
+      for (const reply of result.replies) transcript.push({ speaker: "party", who: reply.who, text: reply.text, gesture: reply.gesture || undefined, emotion: reply.emotion });
+      return {
+        ...m,
+        transcript,
+        tension: result.tension,
+        rapport: result.rapport,
+        awaiting: false,
+        streaming: null,
+        status: result.ended ? "ended" : "active",
+        endReason: result.endReason,
+        agreement: result.agreement,
+      };
+    });
+    const first = result.replies[0]!;
+    sayAloud(first.text, partyOf(mediation.scene, first.who), mediation.expeditionId, `${mediation.scene.id}:${first.who}`);
+    return true;
+  } catch (error) {
+    patchMediation((m) => ({ ...m, transcript: m.transcript.at(-1)?.speaker === "player" ? m.transcript.slice(0, -1) : m.transcript, awaiting: false, streaming: null }));
+    if (!isAbort(error)) toast("error", t("toast.notDelivered"), message(error));
+    return false;
+  } finally {
+    mediationAbort = null;
+  }
+}
+
+export function leaveMediation(): void {
+  mediationAbort?.abort();
+  patchMediation((m) => (m.status === "active" ? { ...m, status: "ended", endReason: "left", awaiting: false, streaming: null } : m));
+}
+
+export function abandonMediation(): void {
+  mediationAbort?.abort();
+  store.set((s) => ({ ...s, active: { ...s.active, mediation: null } }));
+  go("expedition");
+}
+
+/** The mediation as the debrief screen shows it: each party's lines labelled, with their private reactions. */
+function mediationTranscript(m: MediationState): TranscriptEntry[] {
+  const out: TranscriptEntry[] = [];
+  let reactions: PlayerTurn["reactions"];
+  for (const entry of m.transcript) {
+    if (entry.speaker === "player") {
+      reactions = entry.reactions;
+      out.push(entry);
+      continue;
+    }
+    const party = partyOf(m.scene, entry.who);
+    const reaction = reactions?.[entry.who];
+    out.push({
+      speaker: "npc",
+      text: `${party.name}: ${entry.text}`,
+      gesture: entry.gesture,
+      emotion: entry.emotion,
+      rapportDelta: reaction?.rapportDelta ?? 0,
+      rapportAfter: entry.who === "a" ? m.rapport.a : m.rapport.b,
+      innerThought: reaction?.thought,
+      revealedInsightIds: [],
+    });
+    reactions = undefined;
+  }
+  return out;
+}
+
+export async function submitMediationReflection(selfRating: number, selfNote: string): Promise<void> {
+  const s = store.get();
+  const mediation = s.active.mediation;
+  const expedition = mediation ? s.expeditions.find((e) => e.id === mediation.expeditionId) : undefined;
+  if (!mediation || !expedition || mediation.status !== "ended" || s.ui.debriefLoading) return;
+  store.ui({ debriefLoading: true, debriefProgress: null });
+  try {
+    const debrief = await api.mediationDebrief(
+      {
+        context: contextOf(expedition),
+        scene: mediation.scene,
+        player: playerContext(s),
+        transcript: mediation.transcript,
+        tension: mediation.tension,
+        rapport: mediation.rapport,
+        endReason: mediation.endReason ?? "left",
+        agreement: mediation.agreement,
+        selfRating,
+        selfNote: selfNote.trim() || undefined,
+      },
+      { onProgress: (debriefProgress) => store.ui({ debriefProgress }) },
+    );
+    store.set((st) => {
+      const m = st.active.mediation;
+      if (!m || m.id !== mediation.id) return { ...st, ui: { ...st.ui, debriefLoading: false } };
+      const [a, b] = m.scene.parties;
+      const recorded = recordProgress(st, {
+        debrief,
+        selfRating,
+        selfNote,
+        rapportGained: (m.rapport.a + m.rapport.b) / 2 - MEDIATION_STARTING_RAPPORT,
+        insights: 0,
+        who: `${a.name} & ${b.name}`,
+        city: expedition.locality.city,
+      });
+      const result: DebriefResult = {
+        encounterId: m.id,
+        npcId: "mediation",
+        npcName: `${a.name} & ${b.name}`,
+        placeName: m.scene.placeName,
+        debrief,
+        xp: recorded.xp,
+        levelUps: recorded.levelUps,
+        rankUp: recorded.rankUp,
+        selfRating,
+        calibrationGap: recorded.gap,
+        transcript: mediationTranscript(m),
+        insights: [],
+      };
+      return {
+        ...st,
+        progress: recorded.progress,
+        journal: recorded.journal,
+        active: { ...st.active, mediation: { ...m, status: "debriefed" }, debrief: result },
+        ui: { ...st.ui, debriefLoading: false, screen: "debrief" },
+      };
+    });
+    const done = store.get().active.debrief;
+    if (done?.encounterId === mediation.id) {
+      void shareWithClass(mediation.expeditionId, {
+        kind: "mediation",
+        with: done.npcName,
+        headline: debrief.headline,
+        scores: debrief.scores,
+        growthSkill: debrief.growth.skill,
+        goalAchieved: debrief.goalAchieved,
+        selfRating,
+        calibrationGap: done.calibrationGap,
+        xp: done.xp.total,
+      });
+    }
+  } catch (error) {
+    store.ui({ debriefLoading: false });
+    toast("error", t("toast.mediationDebriefFailed"), message(error));
+  }
+}
+
+// ── Classroom ─────────────────────────────────────────────────────────────
+function patchClassroom(fn: (c: ClassroomSave) => ClassroomSave): void {
+  store.set((s) => ({ ...s, classroom: fn(s.classroom ?? {}) }));
+}
+
+export async function createClass(name: string, teacherName: string): Promise<boolean> {
+  try {
+    const created = await api.classes.create({ name, teacherName });
+    patchClassroom((c) => ({ ...c, teacher: { code: created.code, teacherKey: created.teacherKey, className: name } }));
+    return true;
+  } catch (error) {
+    toast("error", t("toast.createClassFailed"), message(error));
+    return false;
+  }
+}
+
+export async function joinClass(code: string, name: string): Promise<boolean> {
+  try {
+    const joined = await api.classes.join(code.trim().toUpperCase(), { name });
+    patchClassroom((c) => ({ ...c, student: { code: joined.view.code, studentId: joined.studentId, name, className: joined.view.name } }));
+    toast("success", t("toast.joined", { name: joined.view.name }), t("toast.joinedText"));
+    return true;
+  } catch (error) {
+    toast("error", t("toast.joinFailed"), message(error));
+    return false;
+  }
+}
+
+export function leaveClass(role: "student" | "teacher"): void {
+  patchClassroom((c) => ({ ...c, [role]: undefined }));
+}
+
+/** Start an assigned expedition with its focus skill; its results will go to the class. */
+export async function startAssignment(assignment: Assignment, code: string): Promise<void> {
+  const s = store.get();
+  if (!s.player) return;
+  setFocusSkill(assignment.focusSkill);
+  const before = s.expeditions[0]?.id;
+  await startExpedition(assignment.destination);
+  const started = store.get().expeditions[0];
+  if (started && started.id !== before) {
+    patchClassroom((c) => ({ ...c, assignments: { ...c.assignments, [started.id]: { code, assignmentId: assignment.id, title: assignment.title } } }));
+  }
+}
+
+/** After a debrief: an assigned expedition's summary goes to the class (scores and headline, never the conversation). */
+async function shareWithClass(expeditionId: string, input: Omit<ClassResultInput, "studentId" | "assignmentId">): Promise<void> {
+  const s = store.get();
+  const link = s.classroom?.assignments?.[expeditionId];
+  const student = s.classroom?.student;
+  if (!link || !student || student.code !== link.code) return;
+  const mark = (status: "sent" | "failed") =>
+    store.set((st) => (st.active.debrief ? { ...st, active: { ...st.active, debrief: { ...st.active.debrief, shared: { className: student.className, status } } } } : st));
+  try {
+    await api.classes.submit(link.code, { ...input, studentId: student.studentId, assignmentId: link.assignmentId });
+    mark("sent");
+  } catch (error) {
+    mark("failed");
+    toast("error", t("toast.shareFailed"), message(error));
+  }
+}
+
+/** A local's line, aloud when the player has voices on. */
+function sayAloud(text: string, speaker: { pronouns: string }, expeditionId: string, voiceId: string): void {
+  const s = store.get();
+  if (!s.settings.voiceOutput) return;
+  void voiceLine(text, { pronouns: speaker.pronouns, seed: `${expeditionId}:${voiceId}` }, s.ui.config?.features.voiceOutput === "model");
 }
 
 export function leaveEncounter(): void {
@@ -383,47 +703,89 @@ export function abandonEncounter(): void {
   go("expedition");
 }
 
+/** XP, skill ratings, calibration, mission and reflection for a finished conversation (a local or a mediation). */
+function recordProgress(
+  st: GameState,
+  input: { debrief: Debrief; selfRating: number; selfNote: string; rapportGained: number; insights: number; scenario?: ScenarioId; who: string; city?: string },
+) {
+  const { debrief, selfRating, selfNote } = input;
+  const xp = encounterXp({ rapportGained: input.rapportGained, insights: input.insights, goalAchieved: debrief.goalAchieved, scores: debrief.scores, reflected: Boolean(selfNote.trim()) });
+  const skills = { ...st.progress.skills };
+  const levelUps: DebriefResult["levelUps"] = [];
+  for (const id of SKILL_IDS) {
+    const before = skills[id];
+    const after = updateSkill(before, debrief.scores[id]);
+    if (skillLevelName(after.rating) !== skillLevelName(before.rating) && after.rating > before.rating) levelUps.push({ skill: id, level: skillLevelName(after.rating) });
+    skills[id] = after;
+  }
+  const rankBefore = rankFor(st.progress.xp).name;
+  const rankAfter = rankFor(st.progress.xp + xp.total).name;
+  const gap = calibrationGap(selfRating, debrief.scores);
+  const mission = debrief.fieldMission;
+  return {
+    xp,
+    levelUps,
+    rankUp: rankAfter !== rankBefore ? rankAfter : undefined,
+    gap,
+    progress: {
+      ...st.progress,
+      xp: st.progress.xp + xp.total,
+      skills,
+      calibration: gap === null ? st.progress.calibration : [...st.progress.calibration, gap].slice(-30),
+      encounters: st.progress.encounters + 1,
+      recentScenarios: input.scenario ? [...st.progress.recentScenarios, input.scenario].slice(-8) : st.progress.recentScenarios,
+      daily: { ...st.progress.daily, [today()]: (st.progress.daily[today()] ?? 0) + 1 },
+    },
+    journal: {
+      ...st.journal,
+      missions:
+        mission.title && !st.journal.missions.some((m) => m.title === mission.title && !m.doneAt)
+          ? [{ id: `m_${Date.now().toString(36)}`, ...mission, createdAt: Date.now() }, ...st.journal.missions]
+          : st.journal.missions,
+      reflections: [
+        { id: `r_${Date.now().toString(36)}`, at: Date.now(), npcName: input.who, city: input.city, selfRating, selfNote: selfNote.trim() || undefined, headline: debrief.headline, question: debrief.reflectionQuestion },
+        ...st.journal.reflections,
+      ],
+    },
+  };
+}
+
 export async function submitReflection(selfRating: number, selfNote: string): Promise<void> {
   const s = store.get();
   const encounter = s.active.encounter;
   if (!encounter || encounter.status !== "ended" || s.ui.debriefLoading) return;
-  store.ui({ debriefLoading: true });
+  store.ui({ debriefLoading: true, debriefProgress: null });
   try {
     const base = encounterBase(s, encounter);
-    const debrief = await api.debrief({
-      ...base,
-      startRapport: encounter.startRapport,
-      endReason: encounter.endReason ?? "left",
-      selfRating,
-      selfNote: selfNote.trim() || undefined,
-    });
+    const debrief = await api.debrief(
+      {
+        ...base,
+        startRapport: encounter.startRapport,
+        endReason: encounter.endReason ?? "left",
+        selfRating,
+        selfNote: selfNote.trim() || undefined,
+      },
+      { onProgress: (debriefProgress) => store.ui({ debriefProgress }) },
+    );
     store.set((st) => {
       const enc = st.active.encounter;
       if (!enc || enc.id !== encounter.id) return { ...st, ui: { ...st.ui, debriefLoading: false } };
       const key = personKey(enc.expeditionId, enc.npcId);
       const foundThisTime = st.journal.insights.filter((j) => j.key.startsWith(`${key}:`) && j.foundAt >= enc.startedAt).length;
-      const xp = encounterXp({
-        rapportGained: enc.rapport - enc.startRapport,
-        insights: foundThisTime,
-        goalAchieved: debrief.goalAchieved,
-        scores: debrief.scores,
-        reflected: Boolean(selfNote.trim()),
-      });
-      const skills = { ...st.progress.skills };
-      const levelUps: DebriefResult["levelUps"] = [];
-      for (const id of SKILL_IDS) {
-        const before = skills[id];
-        const after = updateSkill(before, debrief.scores[id]);
-        if (skillLevelName(after.rating) !== skillLevelName(before.rating) && after.rating > before.rating) levelUps.push({ skill: id, level: skillLevelName(after.rating) });
-        skills[id] = after;
-      }
-      const rankBefore = rankFor(st.progress.xp).name;
-      const rankAfter = rankFor(st.progress.xp + xp.total).name;
-      const gap = calibrationGap(selfRating, debrief.scores);
       const npc = base.npc;
       const existing = st.people.find((p) => p.key === key);
       const expedition = st.expeditions.find((e) => e.id === enc.expeditionId);
-      const mission = debrief.fieldMission;
+      const recorded = recordProgress(st, {
+        debrief,
+        selfRating,
+        selfNote,
+        rapportGained: enc.rapport - enc.startRapport,
+        insights: foundThisTime,
+        scenario: npc.scenario,
+        who: enc.persona.name,
+        city: expedition?.locality.city,
+      });
+      const { xp, levelUps, rankUp, gap } = recorded;
       const result: DebriefResult = {
         encounterId: enc.id,
         npcId: enc.npcId,
@@ -432,7 +794,7 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
         debrief,
         xp,
         levelUps,
-        rankUp: rankAfter !== rankBefore ? rankAfter : undefined,
+        rankUp,
         selfRating,
         calibrationGap: gap,
         transcript: enc.transcript,
@@ -440,26 +802,8 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
       };
       return {
         ...st,
-        progress: {
-          ...st.progress,
-          xp: st.progress.xp + xp.total,
-          skills,
-          calibration: gap === null ? st.progress.calibration : [...st.progress.calibration, gap].slice(-30),
-          encounters: st.progress.encounters + 1,
-          recentScenarios: [...st.progress.recentScenarios, npc.scenario].slice(-8),
-          daily: { ...st.progress.daily, [today()]: (st.progress.daily[today()] ?? 0) + 1 },
-        },
-        journal: {
-          ...st.journal,
-          missions:
-            mission.title && !st.journal.missions.some((m) => m.title === mission.title && !m.doneAt)
-              ? [{ id: `m_${Date.now().toString(36)}`, ...mission, createdAt: Date.now() }, ...st.journal.missions]
-              : st.journal.missions,
-          reflections: [
-            { id: `r_${Date.now().toString(36)}`, at: Date.now(), npcName: enc.persona.name, city: expedition?.locality.city, selfRating, selfNote: selfNote.trim() || undefined, headline: debrief.headline, question: debrief.reflectionQuestion },
-            ...st.journal.reflections,
-          ],
-        },
+        progress: recorded.progress,
+        journal: recorded.journal,
         people: [
           {
             key,
@@ -479,11 +823,51 @@ export async function submitReflection(selfRating: number, selfNote: string): Pr
         ui: { ...st.ui, debriefLoading: false, screen: "debrief" },
       };
     });
+    const done = store.get().active.debrief;
+    if (done) {
+      void shareWithClass(encounter.expeditionId, {
+        kind: "local",
+        with: done.npcName,
+        headline: debrief.headline,
+        scores: debrief.scores,
+        growthSkill: debrief.growth.skill,
+        goalAchieved: debrief.goalAchieved,
+        selfRating,
+        calibrationGap: done.calibrationGap,
+        xp: done.xp.total,
+      });
+    }
     const count = store.get().progress.daily[today()] ?? 0;
-    if (count === 4) toast("info", "Four conversations today — great practice!", "Why not try your field mission with someone in real life next?");
+    if (count === 4) toast("info", t("toast.fourToday"), t("toast.fourTodayText"));
   } catch (error) {
     store.ui({ debriefLoading: false });
-    toast("error", "The mentor couldn't finish the debrief", message(error));
+    toast("error", t("toast.debriefFailed"), message(error));
+  }
+}
+
+/** Ask the mentor about the debrief; the answer streams into `ui.mentorAsking`, then joins the debrief. */
+export async function askMentor(question: string): Promise<void> {
+  const s = store.get();
+  const result = s.active.debrief;
+  const encounter = s.active.encounter;
+  const q = question.trim();
+  if (!q || !result || !encounter || encounter.id !== result.encounterId || s.ui.mentorAsking) return;
+  const { headline, summary, strengths, growth, scores } = result.debrief;
+  const history = (result.qa ?? []).map(({ question: asked, answer }) => ({ question: asked, answer }));
+  store.ui({ mentorAsking: { question: q, answer: "" } });
+  try {
+    const reply = await api.ask({ ...encounterBase(s, encounter), debrief: { headline, summary, strengths, growth, scores }, history, question: q }, (answer) =>
+      store.ui({ mentorAsking: { question: q, answer } }),
+    );
+    store.set((st) => {
+      const debrief = st.active.debrief;
+      const ui = { ...st.ui, mentorAsking: null };
+      if (!debrief || debrief.encounterId !== result.encounterId) return { ...st, ui };
+      return { ...st, active: { ...st.active, debrief: { ...debrief, qa: [...(debrief.qa ?? []), { question: q, ...reply }] } }, ui };
+    });
+  } catch (error) {
+    store.ui({ mentorAsking: null });
+    toast("error", t("toast.askFailed"), message(error));
   }
 }
 

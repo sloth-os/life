@@ -12,6 +12,15 @@
 
 *(Screenshots are from Demo AI + Open map mode. With API keys you get locals played by Claude or any OpenAI-compatible model, Google Maps and Street View.)*
 
+Also in the game:
+- **Voice mode.** Speak to locals: a voice model hears what you said and *how* you said it (tone, pace, clarity). The local reacts to it, and your mentor can comment on your delivery. You can also practise a local greeting and get a pronunciation score.
+- **Two locals at odds.** A mediation challenge on every expedition: two people disagree, and you help them find common ground.
+- **Ask your mentor.** Follow-up questions about your debrief, answered from your own conversation.
+- **Postcards.** A painted souvenir of each place, collected in your atlas.
+- **Classroom mode.** Teachers assign expeditions with a focus skill and see a class debrief. Students share summaries, never their conversations.
+- **Three languages.** English, Spanish and Simplified Chinese, for the interface and for everything the AI writes.
+- **3D fly-ins** over Google's photorealistic map while an expedition is prepared.
+
 ## Why it works
 
 The design is based on research about how people learn conversation skills. In brief (details and citations in [`docs/DESIGN.md`](docs/DESIGN.md)):
@@ -51,6 +60,12 @@ cp .env.example .env   # then fill in what you have
 | `APP_USER_AGENT` | Contact string sent to Wikipedia, Nominatim and Open-Meteo, as their usage policies ask. Please set it. |
 | `EFFORT_TURN`, `EFFORT_DEBRIEF`, … | Claude effort per task (defaults: `low` for turns and hints, `medium` for the rest) |
 | `OPENAI_JSON_MODE` | Structured output to try first with OpenAI-compatible servers: `json_schema` (default), `json_object` or `text`. The game steps down automatically when a server rejects one. |
+| `AI_THINKING`, `AI_THINKING_STYLE` | Reasoning for OpenAI-compatible models: `auto` (default) thinks only for tasks whose effort is `high` or above; `off` never thinks; `model` leaves it to the model. The style (`qwen`'s `enable_thinking` or `openai`'s `reasoning_effort`) is read from the model name unless set. A switch the server rejects is dropped. |
+| `AI_MODEL_EXPEDITION`, `AI_MODEL_PERSONA`, `AI_MODEL_SCENE`, `AI_MODEL_TURN`, `AI_MODEL_HINT`, `AI_MODEL_DEBRIEF`, `AI_MODEL_ASK` | A model per task, on the same provider (`AI_MODEL` for the rest) |
+| `VOICE_MODEL`, `VOICE_BASE_URL`, `VOICE_API_KEY`, `VOICE_VOICES` | **Voice mode**: an OpenAI-compatible model that hears audio (Qwen-Omni, gpt-4o-audio…). It shares the `AI_*` endpoint and key unless you set its own. If it can also speak, locals use `VOICE_VOICES` (default `Cherry,Ethan`: she/her, he/him); otherwise the browser's voices. |
+| `MM_GATEWAY_URL`, `MM_GATEWAY_API_KEY`, `IMAGE_MODEL`, `IMAGE_SIZE` | **Postcards** through [mm-gateway](https://github.com/sloth-os/mm-gateway), which holds the image provider's key (`IMAGE_MODEL` pins a model; size defaults to `1536x1024`). `node scripts/mm-gateway.ts start` runs one from `IMAGE_MODEL_TYPE`, `IMAGE_MODEL_BASE_URL`, `IMAGE_MODEL` and `IMAGE_MODEL_API_KEY`. |
+| `CLASSROOM`, `DATA_DIR` | Classroom mode is on unless `CLASSROOM=off`; classes are kept in `DATA_DIR/classrooms.json` (default `data`, `/app/data` in Docker). One server instance. |
+| `MAPS_WALKING_ROUTES` | `true` adds walking times from the arrival point to each local (agent tools' `compute_routes`, billed per route) |
 
 Production: `npm run build && npm start`.
 
@@ -64,7 +79,7 @@ docker run -p 8787:8787 \
   ghcr.io/sloth-os/life:latest
 ```
 
-It takes the same environment variables as above (or `--env-file .env`). For an OpenAI-compatible model, pass `AI_PROVIDER=openai`, `AI_MODEL`, `AI_BASE_URL` and `AI_API_KEY` instead of `ANTHROPIC_API_KEY`. Tags are `latest` and the commit SHA. To build it yourself: `docker build -t common-ground .`
+It takes the same environment variables as above (or `--env-file .env`). Add `-v common-ground-data:/app/data` to keep classroom data across restarts. For an OpenAI-compatible model, pass `AI_PROVIDER=openai`, `AI_MODEL`, `AI_BASE_URL` and `AI_API_KEY` instead of `ANTHROPIC_API_KEY`. Tags are `latest` and the commit SHA. To build it yourself: `docker build -t common-ground .`
 
 ### Modes
 
@@ -123,48 +138,65 @@ npm run test:e2e     # browser tests on desktop Chromium (Playwright)
 ./scripts/start-redroid.sh   # a real Android device: redroid (Android 12 in Docker) + Chromium
 npm run test:e2e:mobile      # the same journey on that device, at phone and tablet sizes
 
-npm run test:e2e:real        # real services: Google Maps, live grounding and a real model (costs money)
+npm run test:e2e:real        # real services: Google Maps, live grounding, a real model, voice and postcards (costs money)
 ```
 
-The real suite runs the production build against whatever the environment configures (`AI_*` or `ANTHROPIC_API_KEY`, plus `GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`). It serves on `http://localhost:8791`, which a referrer-restricted browser Maps key must allow. To check an OpenAI-compatible model before a whole run, `node scripts/probe-ai.ts` asks it for a tiny JSON reply in each structured-output mode and reports what its server accepts.
+The real suite runs the production build against whatever the environment configures (`AI_*` or `ANTHROPIC_API_KEY`, plus `GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`). It serves on `http://localhost:8791`, which a referrer-restricted browser Maps key must allow. With `VOICE_MODEL` it also speaks through Chromium's fake microphone, playing `test-results/speech/voice-input.wav` (CI synthesizes it with espeak-ng). With mm-gateway it paints a postcard, and it plays a whole mediation.
+
+`node scripts/probe-ai.ts` checks the services in seconds before a whole run:
+- the text model in each structured-output mode, with and without the thinking switch;
+- the voice model listening and scoring pronunciation;
+- the image gateway painting one postcard.
 
 The mobile tests drive Chromium on a real Android system rather than desktop emulation, so touch, viewport and layout behave as on a phone. They need Docker and the `binder_linux` kernel module; the script installs the module if it's missing and reuses a running device.
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the build and typecheck, unit and integration tests, and the browser tests in two jobs: desktop Chromium, and a real Android device (redroid) at phone and tablet sizes. When they all pass, it builds the multi-arch Docker image; it publishes the image only for pushes to `main`. On pushes to `main` and manual runs (never pull requests), it also runs the **real-services suite** with the organization's `GOOGLE_MAPS_API_KEY` and `VISION_MODEL_*` settings mapped onto `AI_*`. It records no traces, because they would capture the browser Maps key.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the build and typecheck, unit and integration tests, and the browser tests in two jobs: desktop Chromium, and a real Android device (redroid) at phone and tablet sizes. When they all pass, it builds the multi-arch Docker image; it publishes the image only for pushes to `main`. On pushes to `main` and manual runs (never pull requests), it also runs the **real-services suite**:
+- the organization's omni model (`OMNI_*`) plays every agent and listens;
+- mm-gateway paints postcards with `IMAGE_MODEL_*`;
+- the suite uses Google Maps with `GOOGLE_MAPS_API_KEY`.
+
+It records no traces, because they would capture the browser Maps key. The gateway's log is saved with keys removed.
 
 The tests run without network or keys:
 - **Claude**: the real Anthropic SDK with a fake `fetch` serving streamed responses. Checks the request shape (model, effort, structured output schema, caching, fallback beta) and the handling of refusals, truncation, schema violations and rate limits.
-- **OpenAI-compatible**: the real OpenAI SDK with a fake `fetch`. Covers strict JSON-schema requests, streaming, stepping down to JSON mode when a server rejects schemas, `<think>` blocks and code fences, coercing loose enum values, a repair round for non-JSON replies, and error mapping.
+- **OpenAI-compatible**: the real OpenAI SDK with a fake `fetch`. Covers strict JSON-schema requests, streaming, stepping down to JSON mode when a server rejects schemas, `<think>` blocks and code fences, coercing loose enum values, a repair round for non-JSON or empty replies, and error mapping.
 - **Maps agent tools**: our MCP client against a local MCP server with the same tool names and argument shapes.
-- **API**: the full HTTP flow through the real engine with Demo AI, including SSE streaming, access codes and rate limiting.
-- **E2E**: onboarding → travel → conversation (including a stereotyping line flagged as `⚠ assumption`) → coach → reflection → debrief → journal review. Runs on desktop Chromium, and on Chromium on a real Android device at phone (390×844) and tablet (768×1024) sizes, with layout checks for each.
+- **API**: the full HTTP flow through the real engine with Demo AI, including SSE streaming (progress, the early briefing), access codes, rate limiting, voice routes and postcards.
+- **Voice and images**: the voice service against a fake omni server (audio out and in, a model that can't speak, data-URI and plain base64 input), and the image gateway client (task polling, inline and remote images, refused outputs).
+- **Mediation and classroom**: the engine's mediation rules and a scripted mediation; the class store (results, the class debrief, teacher-only access, persistence).
+- **Localization**: placeholders match across languages, vocabulary is translated, and prompts carry the player's language.
+- **E2E**: onboarding → travel → conversation (including a stereotyping line flagged as `⚠ assumption`) → coach → reflection → debrief → questions to the mentor → journal review. Also a mediation to an agreement, and a class: a teacher assigns, a student completes, the class debrief shows it. Runs on desktop Chromium, and on Chromium on a real Android device at phone (390×844) and tablet (768×1024) sizes, with layout checks for each.
 
 ```
 shared/        game vocabulary + rules + API schemas (used by both sides)
 server/
-  ai/          Claude and OpenAI-compatible engines, Demo engine, prompts, output schemas, streaming JSON
-  game/        engine: orchestration + authoritative rules
+  ai/          Claude and OpenAI-compatible engines, Demo engine, prompts (mediation too), voice, streaming JSON
+  game/        engine and mediation rules: orchestration + authoritative rules
   grounding/   Maps agent tools (MCP), Wikipedia, Open-Meteo, Nominatim
-src/           React client: screens, map adapters (Google / MapLibre), state
+  classroom/   classes, assignments and results (a JSON file under DATA_DIR)
+  images.ts    postcards through mm-gateway
+src/           React client: screens, map adapters (Google / MapLibre / 3D fly-in), state, i18n (en, es, zh)
+scripts/       probe-ai.ts (service checks), mm-gateway.ts (start/stop the image gateway)
 tests/         unit + integration (Vitest), e2e (Playwright)
 docs/          DESIGN.md: research, learning design, AI design, compliance
 ```
 
 ## Status and known limits
 
-- **Verified live**: the real-services suite plays full expeditions with Google Maps, Street View, Wikipedia grounding and an OpenAI-compatible thinking model (`qwen3.8-max`).
-- **Claude is not yet verified live.** It is tested against the SDK's request and streaming contract with simulated responses. Prompt quality still needs a **live evaluation pass** with a real key (plan in `docs/DESIGN.md` §7.5).
-- **Thinking models make arrival slow.** With `qwen3.8-max`:
-  - an expedition took 3.9–4.3 minutes
-  - each local's persona took 2.3–4.6 minutes
-  - the debrief took 1.3–2.2 minutes
-  - chat replies took 7–20 s
+- **Verified live in CI** (October 2026), against the organization's `qwen3.8-omni-flash`:
+  - Google Maps and Street View, and Wikipedia grounding;
+  - full expeditions, conversation and debriefs;
+  - voice input from a synthesized speech clip, and pronunciation scoring;
+  - a Seedream postcard painted through mm-gateway;
+  - a whole mediation.
 
-  Prefer a fast or non-thinking model for now. The measurements and the improvement plan are in `docs/DESIGN.md` §7.4.
-- **Proxies must allow long responses.** `/api/expedition`, `/api/npc/persona` and `/api/coach/debrief` answer only when the model finishes, so a reverse proxy in front of the server must allow responses of several minutes. nginx's default `proxy_read_timeout` is 60 s.
-- **Macron letters render wrongly.** The display font (Fraunces, from Google Fonts) draws ā ē ī ō ū with the macron shifted right, so "Māori" can read as "Maōri" in titles and scene text. Other accents and Vietnamese marks render correctly. This isn't fixed yet.
-- **Maps agent tools have no live run yet.** Google documents their inputs but not all output fields. The parser accepts several shapes and logs the result keys on first use; check the logs once with your key.
-- Demo AI is deliberately simple and labelled as such. It's for trying the game, for classrooms without API budgets, and for tests.
+  With thinking off, an expedition takes 9.5–20 s, a persona 11–24 s, a chat reply 3–11 s (its first words show after a median 3.4 s) and a debrief 9–14 s. The briefing shows while the locals are still being written. `qwen3.8-max` with thinking took about 4 minutes per expedition. Every measurement is in `docs/DESIGN.md` §7.4.
+- **OpenAI-compatible calls have no output cap yet.** Once in 34 tries, a persona ran to 22,000 characters, five times the usual length, and took a minute.
+- **Claude is not yet verified live.** It is tested against the SDK's request and streaming contract with simulated responses. Prompt quality still needs a **live evaluation pass** with a real key (plan in `docs/DESIGN.md` §7.5).
+- **Voices**: the org's omni model hears but doesn't speak (its server rejects audio output), so locals use the browser's voices there. Voices from a model that speaks (gpt-4o-audio, for example) are tested only against a simulated server so far. Hearing a spoken line takes 4–20 s, and the words show only once the delivery notes are written too.
+- **Maps agent tools have no live run yet**, and neither do walking routes. Google documents their inputs but not all output fields. The parser accepts several shapes and logs the result keys on first use; check the logs once with a `GOOGLE_MAPS_SERVER_KEY`.
+- **Classroom mode is single-instance**: one JSON file on one server. Behind several instances, use one with a shared volume, or turn it off.
+- **Demo AI speaks English only.** It's deliberately simple and labelled as such: for trying the game, for classrooms without API budgets, and for tests.
 
 ## Safety and privacy
 

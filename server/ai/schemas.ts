@@ -110,6 +110,50 @@ export const DebriefDraftSchema = z.object({
   memory: z.string().describe("1–2 sentences the local will remember about the learner"),
 });
 
+export const AskDraftSchema = z.object({
+  answer: z.string().describe("Your answer to the learner's question, under 120 words"),
+  follow_ups: z.array(z.string()).describe("Two short questions the learner might ask you next"),
+});
+
+const PartyDraftSchema = z.object({
+  name: z.string(),
+  age: z.number().int(),
+  role: z.string().describe("Occupation or role, lower case"),
+  pronouns: z.string(),
+  position: z.string().describe("What they say they want, in a sentence"),
+  interest: z.string().describe("Why they really want it: the need or worry underneath, which they don't say at first"),
+  temperament: z.string().describe("How they argue: e.g. 'proud, quick to raise her voice, softens when listened to'"),
+});
+
+export const SceneDraftSchema = z.object({
+  title: z.string(),
+  place_name: z.string().describe("Where the disagreement happens"),
+  situation: z.string().describe("2–3 sentences the learner sees on arriving"),
+  topic: z.string().describe("What they disagree about, in a few words"),
+  party_a: PartyDraftSchema,
+  party_b: PartyDraftSchema,
+  shared_interest: z.string().describe("What both actually want, which neither has noticed"),
+  goal: z.string().describe("The learner's objective, e.g. 'Help Amina and Joseph find an arrangement they can both live with'"),
+  opening: z
+    .array(z.object({ speaker: z.enum(["a", "b"]), text: z.string(), gesture: z.string() }))
+    .describe("Two or three short lines, mid-argument, as the learner walks up"),
+  start_tension: z.number().int().describe("How heated it is, 45–85"),
+});
+
+export const MediationTurnDraftSchema = z.object({
+  replies: z
+    .array(z.object({ speaker: z.enum(["a", "b"]), text: z.string(), gesture: z.string(), emotion: z.enum(EMOTION_IDS) }))
+    .describe("One or two replies: whoever would naturally speak next"),
+  perceived_moves: z.array(z.enum(MOVE_IDS)),
+  tension_delta: z.number().int().describe("How the learner's message changed the tension, -15 to +15"),
+  rapport_a_delta: z.number().int().describe("Party A's trust in the learner, -15 to +12"),
+  rapport_b_delta: z.number().int().describe("Party B's trust in the learner, -15 to +12"),
+  inner_thought_a: z.string().describe("A's private, honest reaction to the learner's message"),
+  inner_thought_b: z.string().describe("B's private, honest reaction to the learner's message"),
+  state: z.enum(["ongoing", "agreement", "walked_away"]),
+  agreement: z.string().describe("If they agreed: what, in one sentence. Otherwise empty"),
+});
+
 export type NpcDraft = z.infer<typeof NpcDraftSchema>;
 export type ExpeditionDraft = z.infer<typeof ExpeditionDraftSchema>;
 export type InsightDraft = z.infer<typeof InsightDraftSchema>;
@@ -117,3 +161,6 @@ export type PersonaDraft = z.infer<typeof PersonaDraftSchema>;
 export type NpcTurnDraft = z.infer<typeof NpcTurnDraftSchema>;
 export type HintDraft = z.infer<typeof HintDraftSchema>;
 export type DebriefDraft = z.infer<typeof DebriefDraftSchema>;
+export type AskDraft = z.infer<typeof AskDraftSchema>;
+export type SceneDraft = z.infer<typeof SceneDraftSchema>;
+export type MediationTurnDraft = z.infer<typeof MediationTurnDraftSchema>;

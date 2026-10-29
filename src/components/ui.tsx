@@ -1,10 +1,11 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { INSIGHT_THRESHOLDS, rapportTier } from "../../shared/rules.ts";
 import type { Source } from "../../shared/schemas.ts";
 import { SKILL_IDS, SKILLS, type SkillId } from "../../shared/skills.ts";
 import { EMOTIONS, LENSES, MOVES, type EmotionId, type LensId, type MoveId } from "../../shared/world.ts";
 import { dismissToast } from "../state/actions.ts";
 import type { Toast } from "../state/types.ts";
+import { emotionLabel, lensName, moveText, skillName, t, tierName } from "../i18n/index.ts";
 
 export function Logo({ size = 32 }: { size?: number }) {
   return (
@@ -36,7 +37,7 @@ export function LensTag({ lens }: { lens: LensId }) {
   const info = LENSES[lens];
   return (
     <span className="tag" style={{ "--tag-color": info.color } as CSSProperties}>
-      <span aria-hidden="true">{info.icon}</span> {info.name}
+      <span aria-hidden="true">{info.icon}</span> {lensName(lens)}
     </span>
   );
 }
@@ -44,16 +45,16 @@ export function LensTag({ lens }: { lens: LensId }) {
 export function EmotionChip({ emotion }: { emotion: EmotionId }) {
   const info = EMOTIONS[emotion];
   return (
-    <span className="emotion" aria-label={`Mood: ${info.label}`}>
-      <span aria-hidden="true">{info.emoji}</span> {info.label}
+    <span className="emotion" aria-label={t("ui.mood", { mood: emotionLabel(emotion) })}>
+      <span aria-hidden="true">{info.emoji}</span> {emotionLabel(emotion)}
     </span>
   );
 }
 
 export function Difficulty({ level }: { level: 1 | 2 | 3 }) {
-  const label = level === 1 ? "Open" : level === 2 ? "Reserved" : "Guarded";
+  const label = level === 1 ? t("ui.difficultyOpen") : level === 2 ? t("ui.difficultyReserved") : t("ui.difficultyGuarded");
   return (
-    <span className="difficulty" aria-label={`Difficulty ${level} of 3: ${label}`}>
+    <span className="difficulty" aria-label={t("ui.difficulty", { level, label })}>
       {[1, 2, 3].map((i) => (
         <span key={i} className={i <= level ? "on" : ""} aria-hidden="true" />
       ))}
@@ -65,10 +66,10 @@ export function Difficulty({ level }: { level: 1 | 2 | 3 }) {
 export function RapportMeter({ value, delta, thresholds = [...INSIGHT_THRESHOLDS] }: { value: number; delta?: number; thresholds?: number[] }) {
   const v = Math.round(value);
   return (
-    <div className="rapport" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={v} aria-label={`Rapport ${v} of 100: ${rapportTier(v)}`}>
+    <div className="rapport" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={v} aria-label={t("ui.rapportAria", { value: v, tier: tierName(rapportTier(v)) })}>
       <div className="rapport__head">
-        <span className="rapport__label">Rapport</span>
-        <strong>{rapportTier(v)}</strong>
+        <span className="rapport__label">{t("ui.rapport")}</span>
+        <strong>{tierName(rapportTier(v))}</strong>
         {delta ? (
           <span key={`${v}-${delta}`} className={`rapport__delta ${delta > 0 ? "up" : "down"}`}>
             {delta > 0 ? `+${delta}` : delta}
@@ -77,9 +78,9 @@ export function RapportMeter({ value, delta, thresholds = [...INSIGHT_THRESHOLDS
       </div>
       <div className="rapport__track">
         <div className="rapport__fill" style={{ width: `${v}%` }} />
-        {thresholds.map((t) => (
-          <span key={t} className={`rapport__mark${v >= t ? " is-reached" : ""}`} style={{ left: `${t}%` }} title={`An insight unlocks at ${t}`}>
-            {v >= t ? "★" : "·"}
+        {thresholds.map((mark) => (
+          <span key={mark} className={`rapport__mark${v >= mark ? " is-reached" : ""}`} style={{ left: `${mark}%` }} title={t("ui.insightAt", { value: mark })}>
+            {v >= mark ? "★" : "·"}
           </span>
         ))}
       </div>
@@ -90,15 +91,15 @@ export function RapportMeter({ value, delta, thresholds = [...INSIGHT_THRESHOLDS
 export function MoveChips({ moves }: { moves: MoveId[] }) {
   if (!moves.length) return null;
   return (
-    <ul className="moves" aria-label="What the local noticed">
+    <ul className="moves" aria-label={t("ui.noticed")}>
       {moves.map((m) => {
         const info = MOVES[m];
         const kind = info.valence > 0 ? "good" : info.valence < 0 ? "watch" : "neutral";
         return (
-          <li key={m} className={`move move--${kind}`} title={info.description}>
+          <li key={m} className={`move move--${kind}`} title={moveText(m).description}>
             {info.valence > 0 ? "+ " : info.valence < 0 ? "⚠ " : ""}
-            {info.label}
-            {info.skill && info.valence !== 0 ? <span className="move__skill"> · {SKILLS[info.skill].name}</span> : null}
+            {moveText(m).label}
+            {info.skill && info.valence !== 0 ? <span className="move__skill"> · {skillName(info.skill)}</span> : null}
           </li>
         );
       })}
@@ -106,7 +107,7 @@ export function MoveChips({ moves }: { moves: MoveId[] }) {
   );
 }
 
-export function SkillRadar({ values, size = 320, label = "Skill Compass" }: { values: Record<SkillId, number>; size?: number; label?: string }) {
+export function SkillRadar({ values, size = 320, label = t("compass.title") }: { values: Record<SkillId, number>; size?: number; label?: string }) {
   const cx = size / 2;
   const cy = size / 2;
   const r = size / 2 - 64;
@@ -114,7 +115,7 @@ export function SkillRadar({ values, size = 320, label = "Skill Compass" }: { va
   const at = (i: number, v: number) => [cx + ((r * v) / 100) * Math.cos(angle(i)), cy + ((r * v) / 100) * Math.sin(angle(i))] as const;
   const polygon = SKILL_IDS.map((id, i) => at(i, Math.max(4, values[id])).join(",")).join(" ");
   return (
-    <svg className="radar" width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${label}: ${SKILL_IDS.map((id) => `${SKILLS[id].name} ${Math.round(values[id])}`).join(", ")}`}>
+    <svg className="radar" width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${label}: ${SKILL_IDS.map((id) => `${skillName(id)} ${Math.round(values[id])}`).join(", ")}`}>
       {[20, 40, 60, 80, 100].map((ring) => (
         <polygon key={ring} className="radar__ring" points={SKILL_IDS.map((_, i) => at(i, ring).join(",")).join(" ")} />
       ))}
@@ -135,7 +136,7 @@ export function SkillRadar({ values, size = 320, label = "Skill Compass" }: { va
               {SKILLS[id].icon}
             </tspan>
             <tspan x={x} dy="1.25em">
-              {SKILLS[id].name}
+              {skillName(id)}
             </tspan>
           </text>
         );
@@ -144,7 +145,7 @@ export function SkillRadar({ values, size = 320, label = "Skill Compass" }: { va
   );
 }
 
-export function SourceList({ sources, title = "Sources" }: { sources: Source[]; title?: string }) {
+export function SourceList({ sources, title = t("ui.sources") }: { sources: Source[]; title?: string }) {
   if (!sources.length) return null;
   const google = sources.filter((s) => s.kind === "google_place");
   return (
@@ -167,7 +168,7 @@ export function SourceList({ sources, title = "Sources" }: { sources: Source[]; 
           </li>
         ))}
       </ul>
-      {google.length ? <p className="sources__note">Place details and summaries by Google Maps.</p> : null}
+      {google.length ? <p className="sources__note">{t("ui.googleNote")}</p> : null}
     </details>
   );
 }
@@ -175,13 +176,13 @@ export function SourceList({ sources, title = "Sources" }: { sources: Source[]; 
 export function Toasts({ toasts }: { toasts: Toast[] }) {
   return (
     <div className="toasts" role="status" aria-live="polite">
-      {toasts.map((t) => (
-        <div key={t.id} className={`toast toast--${t.kind}`}>
+      {toasts.map((toast) => (
+        <div key={toast.id} className={`toast toast--${toast.kind}`}>
           <div>
-            <strong>{t.kind === "insight" ? "📗 " : t.kind === "error" ? "⚠️ " : t.kind === "success" ? "✨ " : ""}{t.title}</strong>
-            {t.body ? <p>{t.body}</p> : null}
+            <strong>{toast.kind === "insight" ? "📗 " : toast.kind === "error" ? "⚠️ " : toast.kind === "success" ? "✨ " : ""}{toast.title}</strong>
+            {toast.body ? <p>{toast.body}</p> : null}
           </div>
-          <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => dismissToast(t.id)}>
+          <button type="button" className="icon-btn" aria-label={t("ui.dismiss")} onClick={() => dismissToast(toast.id)}>
             ×
           </button>
         </div>
@@ -194,11 +195,28 @@ export function Panel({ children, className = "" }: { children: ReactNode; class
   return <section className={`panel ${className}`}>{children}</section>;
 }
 
+/** Seconds since `startedAt`, ticking once a second (0 while `startedAt` is null). */
+export function useElapsed(startedAt: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  return startedAt === null ? 0 : Math.max(0, Math.round((now - startedAt) / 1000));
+}
+
+/** 75 → "1:15". */
+export const formatElapsed = (seconds: number): string => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+
+/** 12400 → "12k". */
+export const formatCount = (n: number): string => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
+
 export function Spinner({ label }: { label?: string }) {
   return (
     <span className="spinner" role="status">
       <span className="spinner__dot" aria-hidden="true" />
-      {label ? <span>{label}</span> : <span className="sr-only">Loading</span>}
+      {label ? <span>{label}</span> : <span className="sr-only">{t("ui.loading")}</span>}
     </span>
   );
 }

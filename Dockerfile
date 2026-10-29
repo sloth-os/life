@@ -27,13 +27,17 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends tini ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
-  PORT=8787
+  PORT=8787 \
+  DATA_DIR=/app/data
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 COPY package.json ./
 COPY shared shared
 COPY server server
 COPY --from=build /app/dist/client dist/client
+# Classroom mode keeps classes here: mount a volume to keep them across container restarts.
+RUN mkdir -p /app/data && chown node:node /app/data
+VOLUME /app/data
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \

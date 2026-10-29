@@ -2,10 +2,13 @@
 import { expect, type Page } from "@playwright/test";
 
 /**
- * How a text entry is submitted. On a real phone the on-screen keyboard can cover or shift
- * buttons, so mobile journeys submit with Enter, as people do with the keyboard's send key.
+ * How a text entry is submitted: a mouse click, Enter, or a touch.
+ *
+ * Mobile conversations tap Send. Playwright's Enter bypasses the on-screen keyboard, which may
+ * still hold the last word as a composition (Android underlines the word at the cursor), and the
+ * composer ignores Enter during composition, as Chinese input needs.
  */
-export type Submit = "click" | "enter";
+export type Submit = "click" | "enter" | "tap";
 
 export async function onboard(page: Page, name = "Sam", submit: Submit = "click") {
   await page.goto("/");
@@ -32,6 +35,7 @@ export async function say(page: Page, text: string, submit: Submit = "click") {
   const message = page.getByRole("textbox", { name: /Your message/ });
   await message.fill(text);
   if (submit === "enter") await message.press("Enter");
+  else if (submit === "tap") await page.getByTestId("send-btn").tap();
   else await page.getByTestId("send-btn").click();
   await expect(page.locator(".msg--player").last()).toContainText(text);
   await expect(page.locator(".msg.is-streaming")).toHaveCount(0);

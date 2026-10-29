@@ -68,13 +68,13 @@ for (const profile of PROFILES) {
       await expect(page.getByRole("meter", { name: /Rapport/ })).toBeVisible();
       expect(await bottomOf(page, "send-btn"), "the send button is reachable without scrolling").toBeLessThanOrEqual(viewport.height + 1);
 
-      await say(page, "Habari! What are you working on today?", "enter");
-      await say(page, "You people must all be poor here", "enter");
+      await say(page, "Habari! What are you working on today?", "tap");
+      await say(page, "You people must all be poor here", "tap");
       await expect(page.locator(".msg--player").last().locator(".move--watch")).toContainText("assumption");
       await page.getByTestId("coach-btn").tap();
       await expect(page.locator(".coach__hint")).toBeVisible();
-      await say(page, "That sounds hard. How are you holding up?", "enter");
-      await say(page, "Thank you for sharing. Take care, goodbye!", "enter");
+      await say(page, "That sounds hard. How are you holding up?", "tap");
+      await say(page, "Thank you for sharing. Take care, goodbye!", "tap");
       await expect(page.getByText("You said goodbye.")).toBeVisible();
       expect(await fitsViewportWidth(page), "encounter fits the screen width").toBe(true);
 

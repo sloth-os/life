@@ -1,6 +1,17 @@
-import type { DebriefRequest, Destination, HintRequest, PersonaRequest, PlayerContext, TurnRequest } from "../../shared/schemas.ts";
+import type {
+  AskRequest,
+  DebriefRequest,
+  Destination,
+  HintRequest,
+  MediationDebriefRequest,
+  MediationSceneRequest,
+  MediationTurnRequest,
+  PersonaRequest,
+  PlayerContext,
+  TurnRequest,
+} from "../../shared/schemas.ts";
 import type { GroundingPack } from "../grounding/index.ts";
-import type { DebriefDraft, ExpeditionDraft, HintDraft, NpcTurnDraft, PersonaDraft } from "./schemas.ts";
+import type { AskDraft, DebriefDraft, ExpeditionDraft, HintDraft, MediationTurnDraft, NpcTurnDraft, PersonaDraft, SceneDraft } from "./schemas.ts";
 
 export interface ComposeExpeditionInput {
   destination: Destination;
@@ -22,6 +33,22 @@ export interface NpcTurnInput {
   wrapUp: boolean;
 }
 
+export interface MediationTurnInput {
+  request: MediationTurnRequest;
+  /** 1-based count of the learner's messages including this one. */
+  turnNumber: number;
+  wrapUp: boolean;
+}
+
+/** What a streaming call has produced so far, for progress reports and early results. */
+export interface AiProgress {
+  /** Characters of reasoning so far (0 when the model doesn't expose it). */
+  thinking: number;
+  /** The answer so far: partial JSON. */
+  output: string;
+}
+export type OnProgress = (progress: AiProgress) => void;
+
 /**
  * The three agents behind the game — Game Master (expedition, persona),
  * Partner (NPC turns) and Mentor (hint, debrief). Implemented by Claude, by any
@@ -29,10 +56,18 @@ export interface NpcTurnInput {
  */
 export interface GameAI {
   readonly mode: "claude" | "openai" | "demo";
-  composeExpedition(input: ComposeExpeditionInput, signal?: AbortSignal): Promise<ExpeditionDraft>;
-  createPersona(input: CreatePersonaInput, signal?: AbortSignal): Promise<PersonaDraft>;
+  composeExpedition(input: ComposeExpeditionInput, signal?: AbortSignal, onProgress?: OnProgress): Promise<ExpeditionDraft>;
+  createPersona(input: CreatePersonaInput, signal?: AbortSignal, onProgress?: OnProgress): Promise<PersonaDraft>;
   /** `onReply` receives the reply text decoded so far (a snapshot, not a delta). */
   npcTurn(input: NpcTurnInput, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<NpcTurnDraft>;
   coachHint(request: HintRequest, signal?: AbortSignal): Promise<HintDraft>;
-  debrief(request: DebriefRequest, signal?: AbortSignal): Promise<DebriefDraft>;
+  debrief(request: DebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft>;
+  /** A follow-up question about the debrief; `onAnswer` receives the answer written so far. */
+  askMentor(request: AskRequest, onAnswer?: (answerSoFar: string) => void, signal?: AbortSignal): Promise<AskDraft>;
+  /** Mediation scenes: the Game Master sets up two locals at odds… */
+  createScene(request: MediationSceneRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<SceneDraft>;
+  /** …the model plays both while the learner mediates (`onReply` gets the first reply so far)… */
+  mediationTurn(input: MediationTurnInput, onReply?: (replySoFar: string) => void, signal?: AbortSignal): Promise<MediationTurnDraft>;
+  /** …and the mentor debriefs the mediation. */
+  mediationDebrief(request: MediationDebriefRequest, signal?: AbortSignal, onProgress?: OnProgress): Promise<DebriefDraft>;
 }

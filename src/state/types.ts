@@ -5,17 +5,24 @@ import type {
   Destination,
   EndReason,
   Expedition,
+  ExpeditionBriefing,
+  LatLng,
   Hint,
   Insight,
+  MediationEndReason,
+  MediationEntry,
+  MediationScene,
   NpcCard,
   Persona,
   Source,
+  StreamProgress,
   TranscriptEntry,
 } from "../../shared/schemas.ts";
 import type { SkillId } from "../../shared/skills.ts";
+import type { Lang } from "../i18n/index.ts";
 import type { LensId, ScenarioId } from "../../shared/world.ts";
 
-export type Screen = "title" | "onboarding" | "world" | "expedition" | "encounter" | "debrief" | "journal" | "compass" | "settings";
+export type Screen = "title" | "onboarding" | "world" | "expedition" | "encounter" | "mediation" | "debrief" | "journal" | "compass" | "classroom" | "settings";
 
 export interface PlayerProfile {
   name: string;
@@ -29,6 +36,10 @@ export interface Settings {
   voiceOutput: boolean;
   textScale: 1 | 1.15 | 1.3;
   reducedMotion: boolean;
+  /** 3D fly-ins over Google's photorealistic map while an expedition is prepared (on unless false). */
+  flyIns?: boolean;
+  /** Interface (and AI) language; the browser's when unset. */
+  language?: Lang;
   theme: "system" | "light" | "dark";
   accessCode: string;
 }
@@ -129,6 +140,23 @@ export interface EncounterState {
   awaiting: boolean;
 }
 
+/** A mediation scene in progress: two locals at odds, the learner in the middle. */
+export interface MediationState {
+  id: string;
+  expeditionId: string;
+  scene: MediationScene;
+  transcript: MediationEntry[];
+  tension: number;
+  rapport: { a: number; b: number };
+  status: "active" | "ended" | "debriefed";
+  endReason?: MediationEndReason;
+  agreement?: string;
+  startedAt: number;
+  /** The first reply streaming in right now, if any. */
+  streaming: string | null;
+  awaiting: boolean;
+}
+
 export interface DebriefResult {
   encounterId: string;
   npcId: string;
@@ -142,6 +170,18 @@ export interface DebriefResult {
   calibrationGap: number | null;
   transcript: TranscriptEntry[];
   insights: Insight[];
+  /** Follow-up questions to the mentor about this debrief. */
+  qa?: { question: string; answer: string; followUps: string[] }[];
+  /** Shared with the class this assignment came from: "sent", or why it couldn't be. */
+  shared?: { className: string; status: "sent" | "failed" };
+}
+
+/** Classroom mode, as this browser takes part: a student in a class, a teacher of one, or both. */
+export interface ClassroomSave {
+  student?: { code: string; studentId: string; name: string; className: string };
+  teacher?: { code: string; teacherKey: string; className: string };
+  /** Expeditions started from an assignment, so their results go to the class. */
+  assignments?: Record<string, { code: string; assignmentId: string; title: string }>;
 }
 
 export interface SaveData {
@@ -152,12 +192,16 @@ export interface SaveData {
   journal: { insights: JournalInsight[]; phrases: JournalPhrase[]; missions: Mission[]; reflections: Reflection[] };
   people: PersonEntry[];
   atlas: AtlasEntry[];
+  /** Absent in saves from before classroom mode. */
+  classroom?: ClassroomSave;
   /** Expeditions kept for revisits (most recent first, capped). */
   expeditions: Expedition[];
   active: {
     expeditionId: string | null;
     personas: Record<string, Persona>;
     encounter: EncounterState | null;
+    /** Absent in saves from before mediation scenes. */
+    mediation?: MediationState | null;
     debrief: DebriefResult | null;
   };
 }
@@ -174,10 +218,15 @@ export interface UiState {
   config: AppConfig | null;
   configError: string | null;
   toasts: Toast[];
-  busy: { kind: "expedition"; label: string; step: number } | null;
+  /** An expedition on its way: real progress from the server, then the briefing before the locals. */
+  busy: { kind: "expedition"; label: string; destination: LatLng; startedAt: number; progress: StreamProgress | null; briefing: ExpeditionBriefing | null } | null;
   personaStatus: Record<string, "loading" | "ready" | "error">;
   hintLoading: boolean;
+  sceneLoading: boolean;
   debriefLoading: boolean;
+  debriefProgress: StreamProgress | null;
+  /** A question to the mentor whose answer is streaming in. */
+  mentorAsking: { question: string; answer: string } | null;
   needsAccessCode: boolean;
 }
 

@@ -111,8 +111,19 @@ During the conversation:
 2. **Mentor debrief**: a summary; skill scores 0–4 with **verbatim quotes as evidence**; strengths; **one** growth focus with the learner's original line rewritten; "how your words landed" (the local's private reactions, revealed turn by turn); a calibration note; a reflection question; and a **field mission** for real life.
 3. Rewards: XP, Compass growth, insights, phrases, a postcard stamp.
 
+**Ask your mentor.** After the debrief the learner can ask up to five follow-up questions ("Why did I get that score?", "How could I have said that differently?", or their own). The mentor answers from the transcript, quoting the learner's words, and suggests two follow-ups. Explaining feedback on request keeps it from feeling like a verdict.
+
 ### 4.5 Collect and review
-- **Field Journal**: insights by lens with sources, phrasebook, people met (revisit them; they remember you), missions, reflections.
+- **Field Journal**: insights by lens with sources, phrasebook (with pronunciation practice when voice is on), people met (revisit them; they remember you), missions, reflections.
+- **Postcards**: after a debrief the learner can have a postcard of the place painted, a souvenir kept in the atlas. The prompt names only the place the player chose and the lenses they explored, never Google Maps content.
+
+### 4.6 Classroom mode
+Teachers use the game with a class, and the design keeps the privacy model intact while doing it:
+- A teacher creates a class and gets a **class code** for students and a **teacher key**. The key is shown once and stored only as a hash.
+- The teacher **assigns expeditions**: a place, a focus skill and a note. Students join with the code and see the assignments in their class view. Starting one switches the learner's focus skill to the assignment's, so the Game Master and the coach work on it. It stays their focus afterwards, until they choose another on the Compass.
+- After a debrief on an assignment, the student chooses to **share a summary**: the rubric scores, the mentor's headline and growth skill, whether they reached the goal, their self-rating and its calibration gap. The conversation itself never leaves the browser.
+- The **class debrief view** shows, per assignment: how many finished, the share who reached the goal, average scores per skill, the growth areas the mentor named most often, and the class's average calibration gap. A positive gap means the class rates itself higher than the mentor does; that is a good prompt for a discussion about self-assessment.
+- Students are identified by the name they gave and a private id the server never shows. There are no accounts.
 - **Recall**: insights become Leitner cards (boxes 1–5, intervals 0/1/3/7/16 days).
 - **Atlas**: stamps on the world map; completion by lens and continent.
 
@@ -137,6 +148,14 @@ During the conversation:
 - An insight is accepted only if the resulting rapport meets its threshold, at most one new insight per reply.
 - If rapport drops to 0 or below, the local ends the conversation.
 - The hidden concern is hinted at 60+ and revealed at 75+ only if the learner responds with care.
+
+### 5.1 Mediation scenes: two locals at odds
+Every expedition offers a harder challenge: two locals disagree about something everyday (tables on a shared pavement, band practice above a bakery, the only shady spot at the market), and the learner steps in. This is the game's namesake skill. It draws on interest-based negotiation (Fisher & Ury): each person has a stated **position**, an unspoken **interest** underneath it, and the two share an interest neither has noticed.
+
+- The Game Master writes the scene from the expedition's grounding. The model plays both people each turn: one or both answer, each with a private reaction.
+- **The engine owns the rules.** Tension (0–100) moves by at most ±15 a turn, and each person's trust by the usual rapport limits. An **agreement counts only when tension is at or below 45 and both trust the learner at least 40**; a model that declares a settlement earlier is overruled. Above 95 tension, someone walks off.
+- Taking sides, judging or rushing a fix raises tension; reflecting each side, asking what matters to them and reframing toward the shared interest lowers it.
+- The mentor debriefs it as a mediation (even-handedness, interests over positions, reframing), with both people's private reactions as evidence.
 
 ---
 
@@ -199,9 +218,10 @@ flowchart TB
 Any server that speaks the Chat Completions API (OpenAI, model gateways, vLLM, Ollama) can play the three agents through the official `openai` SDK, with the same prompts as Claude. Servers differ in what they support, so the provider adapts:
 - **Every call streams.** Thinking models can reason for minutes before their first output token. A non-streamed request stays silent all that time and runs into time-to-headers timeouts, which is what hung the first live run. Streaming also lets the NPC's `reply` reach the browser as it is written, as with Claude.
 - **Structured output degrades gracefully.** It starts with strict `json_schema`, derived from the Zod schemas with every object closed and fully required. If the server rejects that, it tries `json_object`, then plain text with the schema in the prompt. A rejected mode is remembered for the life of the process.
-- **Replies are repaired before validation.** Reasoning in `<think>` tags and code fences is stripped. Missing fields are filled, and loose enum values are matched (`"Warm"` → `warm`) or replaced. A reply that isn't JSON gets one repair round. The engine then validates and clamps as usual.
+- **Replies are repaired before validation.** Reasoning in `<think>` tags and code fences is stripped. Missing fields are filled, and loose enum values are matched (`"Warm"` → `warm`) or replaced. A reply that isn't JSON, or is an empty object (seen live from `qwen3.8-omni-flash`), gets one repair round. The engine then validates and clamps as usual, and asks for a persona once more if it came back without insights.
 - **Claude-only features are absent.** There are no prompt-caching hints (many servers cache prefixes on their own) and no server-side refusal fallback. Refusals and content filters surface as errors.
 - **Calls are observable.** Each call logs time to first token, total time, reasoning size and finish reason. `scripts/probe-ai.ts` checks which structured-output modes a server accepts in seconds.
+- **Thinking is a per-task choice** (§7.4), and **each task can use its own model** (`AI_MODEL_<TASK>`).
 
 ### 7.4 Latency plan
 | Step | Target | How |
@@ -221,28 +241,68 @@ Any server that speaks the Chat Completions API (OpenAI, model gateways, vLLM, O
 
 Conversation is usable at this speed. Arrival takes more than ten times its target and the debrief five to thirteen times; almost all of that is reasoning.
 
-**Improvements, in order of expected payoff:**
-1. **Thinking controls per task.** Pass the provider's own controls through configuration, mapped from the per-task effort settings: `reasoning_effort` for OpenAI reasoning models, `enable_thinking` or `thinking_budget` for Qwen. The Game Master would then reason less where it matters less.
-2. **A model per task.** Let the expedition and persona calls use a faster or non-thinking model while the mentor keeps a stronger one.
-3. **Live progress.** The server already receives tokens as they arrive. Stream the Game Master's progress to the browser, so the arrival screen shows activity and elapsed time instead of timed steps that stall on "Meeting the locals…". A steady stream also keeps reverse proxies from timing out.
-4. **Arrive in two stages.** Stream the briefing (title, scene, greeting, curiosity board) first and let the locals follow, so the learner reads while the rest is written.
+**Improvements, all implemented in v2:**
+1. **Thinking controls per task.** The provider sends the server's own switch, mapped from each task's effort: Qwen's `enable_thinking`, or OpenAI's `reasoning_effort`. The style is read from the model name or set with `AI_THINKING_STYLE`. With the default `AI_THINKING=auto`, only tasks at `high` effort or above think. A switch the server rejects is dropped for the rest of the process.
+2. **A model per task** (`AI_MODEL_EXPEDITION`, `AI_MODEL_TURN`, …), for example a fast model for the Game Master and a stronger one for the mentor.
+3. **Live progress.** Long calls answer with server-sent events: the phase (grounding, thinking, writing) with counts every 400 ms, and a keep-alive comment every 15 s. The arrival screen shows real progress and a clock, and proxies see a live connection.
+4. **Two-stage arrival.** The server parses the streaming expedition and sends the briefing (title, scene, greeting, curiosity board) as soon as it is written. The learner reads it while the locals are still being written.
 
-Until (3) lands, a reverse proxy in front of the server must allow multi-minute responses for `/api/expedition`, `/api/npc/persona` and `/api/coach/debrief`. nginx's default `proxy_read_timeout` is 60 s.
+**Measured after.** Nine CI runs of the real-services suite on the v2 branch (October 2026), on the organization's `qwen3.8-omni-flash` with thinking off. The ranges cover every call those runs made:
+
+| Step | Calls | First output token | Total |
+|---|---|---|---|
+| Expedition | 11 | 1.6–2.7 s in seven calls, 4–9 s in four | 9.5–20 s |
+| Persona (each; the three run in parallel) | 32 | 1.4–10 s | 11–24 s |
+| Mediation scene | 3 | 2.7–4 s | 11–13 s |
+| Reply (a local, or both sides of a mediation) | 24 | 1.2–6.3 s, median 3.4 s | 2.8–11 s |
+| Debrief | 8 | 1.6–5.4 s | 9.3–13.5 s |
+| Hearing a spoken line (a 6–7 s clip) | 15 | | 4–20 s |
+| Pronunciation score (a 1.5–3 s clip) | 15 | | 6.6–26 s, once 54 s |
+| Postcard (Seedream through mm-gateway) | 13 | | 44–73 s |
+
+Against the targets:
+- **Arrival is met.** The expedition is written in 9.5–20 s, and its briefing shows before that. The locals are written while the learner reads it.
+- **The debrief is met**: 9.3–13.5 s, against a target of 10–15 s.
+- **Replies are close.** A reply streams as it is written, so its first words show at about the first token: a median of 3.4 s, and within 3 s in 10 of the 24 replies.
+
+Two persona calls are left out of the table. One came back as an empty object after 4 s; that now gets a repair round (§7.3). The other ran to 22,000 characters, five times the usual length, and took 61 s.
+
+The real-services expedition test went from 8.5–11 minutes to about 1. With voice and a postcard it takes 2.3–2.8 minutes, about a minute of which is the painting. The mediation test takes about a minute, and the whole suite 3.7–4 minutes. On the probe's tiny requests, the thinking switch halves the time: a median of 2.1 s with thinking off against 4.2 s with it (27 calls each).
+
+**Next, from these measurements:**
+1. **Bound each task's output** on OpenAI-compatible servers, which have no cap today. A runaway persona keeps its local waiting, and because the persona goes into every reply's prompt, it slows the whole conversation too.
+2. **Show the heard words first.** The voice model writes the transcript before the delivery notes. Streaming it into the message box, as replies are streamed, lets the player check their words while the notes are still being written.
+3. **Log the time to the briefing.** It is the wait a player actually sees on arrival, and the logs don't record it yet.
 
 ### 7.5 Evaluation plan (for prompt iteration)
 - **Partner realism**: on scripted learner transcripts (rude, generic, excellent), check that rapport moves in the right direction, insights are withheld before thresholds, and boundaries hold.
 - **Stereotype audit**: generate personas for 50 places and run a marked-words scan (banned-trope lexicon). Human review samples.
 - **Mentor fidelity**: every quoted piece of evidence must appear verbatim in the transcript (checked automatically). Rubric agreement with human raters on a labeled set.
 - **Grounding**: insight facts are checked against the source extracts (LLM-judge plus spot checks).
-- **Live smoke test**: on every push to `main`, CI's real-services suite plays one full expedition against Google Maps and the configured model. The server's per-call timing lines feed the measurements in §7.4.
+- **Live smoke test**: on every push to `main`, CI's real-services suite plays one full expedition against Google Maps and the configured model, with voice and a postcard, plus a whole mediation. The server's per-call timing lines feed the measurements in §7.4.
+
+### 7.6 Voice mode
+Speaking is closer to real conversation than typing, and how something is said matters as much as what is said. With a **voice model** (an OpenAI-compatible model that hears audio: Qwen-Omni, gpt-4o-audio…):
+- **Speak to locals.** The browser records 16 kHz mono WAV (no automatic gain or noise suppression, which distort tone). The voice model returns what was said, plus **delivery**: tone, pace, clarity, and one kind observation, never about accent. The transcript goes into the message box for the learner to check. The line is sent with its delivery: the local reacts to how it sounded, and the mentor may comment on it.
+- **Pronunciation practice.** The learner records an attempt at the greeting or a phrase. The model scores how close it came (0–100) and gives one concrete tip.
+- **Voices for locals.** If the voice model can speak, each local gets a consistent voice by pronouns (`VOICE_VOICES`). A model that rejects audio output, like the organization's omni model, is remembered, and the browser's speech takes over.
+- Recordings are sent to the voice model and never stored. Without a voice model, browser dictation and speech remain as before.
+
+### 7.7 Images: postcards
+Postcards are painted through [mm-gateway](https://github.com/sloth-os/mm-gateway), which holds the image provider's credentials. The game creates a task, polls it, and downloads the image (inline or from the provider). If the provider refuses its own output, the game asks once more with a new task. A player gets six postcards an hour, and each expedition's postcard is cached on the server. In the browser they live in IndexedDB, since they are too large for the save file.
+
+### 7.8 Languages
+The interface speaks English, Spanish and Simplified Chinese. The dictionaries are typed: a missing key fails the build, and a test checks that placeholders match. Game vocabulary is translated by id from the shared definitions. The player's language also goes into every prompt: the AI writes all player-facing text in it, keeps local greetings and phrases in the local language with meanings translated, and keeps the player's own quotes verbatim. Demo AI stays English.
 
 ---
 
 ## 8. Google Maps integration and terms compliance
 
 What Google Maps contributes:
-1. **Maps JavaScript API** (display): world map, Advanced Markers (postcards, stamps, locals), camera fly-ins, and **Street View** at each local's place for an on-the-ground view.
-2. **Maps Experience agent tools** (formerly *Maps Grounding Lite*; MCP at `https://mapstools.googleapis.com/mcp`): `search_places` (one query per lens near the destination) and `lookup_weather` ground the Game Master in real places and today's weather. The "go anywhere" text search also goes through `search_places`.
+1. **Maps JavaScript API** (display): world map, Advanced Markers (postcards, stamps, locals), camera fly-ins, and **Street View** at each local's place for an on-the-ground view. While an expedition is prepared, a **photorealistic 3D fly-in** (`Map3DElement`, `maps3d` library) descends on the destination and circles it. It is skipped with reduced motion, or when the 3D library or WebGL isn't available.
+2. **Maps Experience agent tools** (formerly *Maps Grounding Lite*; MCP at `https://mapstools.googleapis.com/mcp`): `search_places` (one query per lens near the destination) and `lookup_weather` ground the Game Master in real places and today's weather. The "go anywhere" text search also goes through `search_places`. Summaries come in the player's language (`language_code`). With `MAPS_WALKING_ROUTES`, `compute_routes` adds walking times to each local, shown with Google attribution and dropped with the coordinates after 30 days.
+
+The v1 roadmap's "Pro agent-tools options (review-based place insights)" turned out not to exist. The documented tools are `search_places`, `lookup_weather`, `compute_routes`, `resolve_names` and `resolve_maps_urls`, without reviews. Places API reviews can't feed an LLM under §3.2.3(c), so walking routes and localized summaries took that slot.
 
 Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specific Terms §10; this is not legal advice):
 - **LLM content from Maps data only through the agent tools.** The terms forbid creating content from Google Maps Content (§3.2.3(c)). SST §10.2.1 allows grounding an LLM with Maps Experience agent tools if the output follows the Generative AI Prohibited Use Policy and **shows the associated Google Maps source links**. Every expedition, local card, and insight drawn from Maps data shows its Google Maps link. We never pass Places Autocomplete or Geocoder results to the LLM.
@@ -250,7 +310,8 @@ Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specif
 - **Google coordinates stay inside Google's services.** When a destination comes from a Google search result, third-party lookups use the player's own words instead: Wikipedia text search rather than geosearch, and no Open-Meteo or Nominatim call.
 - **Citations map to sources.** Each `search_places` summary cites its results by position (`[0]`). The Game Master's prompt lists, for every search, which global source id (`P#`) each position refers to, so grounded text and map pins stay linked to the right Google Maps link.
 - **No mixing with non-Google maps.** Open mode (MapLibre + OpenFreeMap + Wikipedia) is a *separate mode* used only when no Google key is configured. Google content and the open map never appear together (§3.2.3(e)).
-- **Voice**: if voice output is on, the verbatim transcript stays on screen (the companion log) and a persistent notice says that AI output may include Google Maps content, as the agent-tools documentation requires for voice interfaces.
+- **Voice**: whether locals speak through the voice model or the browser, the verbatim transcript stays on screen (the companion log). The voice settings carry a persistent notice that AI output may include Google Maps content, as the agent-tools documentation requires for voice interfaces.
+- **Postcards** are painted from the place the player chose and the lenses explored, never from Google Maps content.
 - **No training**: Grounded Output is never used to train models (§10.3.2). Anthropic's commercial API terms state that API inputs and outputs aren't used for training by default.
 
 ---
@@ -261,8 +322,9 @@ Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specif
 2. **Factual humility**: NPCs share insights in their own words, from experience. If asked something beyond their knowledge, they answer like an ordinary person ("not sure, honestly"). Sources are always one tap away. A disclosure says characters are fictional and AI-generated.
 3. **Content**: NPC content is suitable for ages 13+ in every mode. If the learner harasses an NPC, it responds as a self-respecting person and ends the encounter, and the mentor addresses it without shaming.
 4. **Healthy use**: encounters are short; field missions push practice into real life; after a few encounters in a day the game suggests a break and a real conversation.
-5. **Privacy**: no accounts; progress lives in `localStorage` with export and reset; the server keeps no player data. API keys stay server-side, except the browser Maps key, which is HTTP-referrer-restricted by design.
-6. **Accessibility**: keyboard-first, ARIA live region for NPC replies, color always paired with text or icons, `prefers-reduced-motion`, adjustable text size, optional voice input and output (Web Speech API), mobile layout.
+5. **Privacy**: no accounts; progress lives in `localStorage` (postcards in IndexedDB) with export and reset. Voice recordings are transcribed and discarded. API keys stay server-side, except the browser Maps key, which is HTTP-referrer-restricted by design. In classroom mode a student shares only summaries of assigned conversations: scores, the mentor's headline, goal reached, self-rating calibration. Transcripts never leave the browser. A teacher's key is shown once and stored only as a hash. Students' ids stay on the server.
+6. **Accessibility**: keyboard-first, ARIA live region for NPC replies, color always paired with text or icons, `prefers-reduced-motion` (which also skips 3D fly-ins), adjustable text size, voice input and output, mobile layout.
+7. **Languages and scripts**: English, Spanish and Simplified Chinese, with the AI writing in the player's language. Two font fixes help here. Fraunces misplaces the macron of ā ē ī ō ū (Kyōto, Māori), so a Literata subset draws just those letters. Noto Sans SC, fetched in slices, covers devices without a CJK font.
 
 ---
 
@@ -276,11 +338,15 @@ Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specif
 | AI | `@anthropic-ai/sdk` (beta messages: structured outputs, fallbacks); `openai` for OpenAI-compatible Chat Completions | Official SDKs |
 | Maps grounding | `@modelcontextprotocol/sdk` client → Maps Experience agent tools | Official MCP client; Streamable HTTP + `X-Goog-Api-Key` |
 | Validation | Zod 4 | Shared schemas for requests and AI outputs |
-| Tests | Vitest (unit/integration, fake `fetch` for the Claude and OpenAI SDKs), Playwright (e2e in Open + Demo mode on desktop Chromium and Android; a real-services suite with Google Maps and a real model) | Full coverage without keys, plus a keyed run of the real thing in CI |
+| Voice | OpenAI SDK against an omni model: `input_audio` in; `modalities: ["text","audio"]` out where supported; browser Web Speech API otherwise | One client for hearing and speaking |
+| Images | mm-gateway REST (`/v1/images`) | The gateway holds provider keys and routes models |
+| Classroom | One JSON file under `DATA_DIR`, written atomically | Small classes; nothing to install |
+| i18n | Typed dictionaries (`src/i18n`), vocabulary by id | No runtime dependency; missing keys fail the build |
+| Tests | Vitest (unit/integration, fake `fetch` for the Claude and OpenAI SDKs, fake omni and gateway servers), Playwright (e2e in Open + Demo mode on desktop Chromium and Android; a real-services suite with Google Maps, the omni model, voice through a fake microphone, and postcards) | Full coverage without keys, plus a keyed run of the real thing in CI |
 
 **Operations.** Open-data responses are cached (Wikipedia and Nominatim for 24 h, weather for 15 min) and retried once when rate-limited, and requests carry an identifying User-Agent. AI routes are rate-limited **per player**, using a browser-generated id, with a 10× ceiling per IP, so a classroom behind one IP isn't throttled as one person. An optional `ACCESS_CODE` gates classroom deployments.
 
-**State model.** The client is the source of truth: the save file holds the profile, skills, journal, and the current expedition and encounter. The server is stateless apart from a short-lived in-memory grounding cache, so any instance can serve any request. Each turn request carries the persona and transcript, with sizes limited by the schemas.
+**State model.** The client is the source of truth: the save file holds the profile, skills, journal, and the current expedition, encounter or mediation. The gameplay server is stateless apart from short-lived in-memory caches (grounding, recent speech, today's postcards), so any instance can serve any request. Each turn request carries the persona and transcript, with sizes limited by the schemas. The exception is classroom mode, which keeps classes in one file on one instance.
 
 **API surface.**
 | Route | Purpose |
@@ -292,6 +358,13 @@ Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specif
 | `POST /api/npc/turn` | SSE: `reply` deltas, then the validated turn (rapport, moves, insights, state) |
 | `POST /api/coach/hint` | One concrete mid-conversation suggestion |
 | `POST /api/coach/debrief` | Rubric-scored debrief with evidence, rewrite, calibration, field mission |
+| `POST /api/coach/ask` | SSE: the mentor's answer to a follow-up question, then two suggested follow-ups |
+| `POST /api/mediation/scene` · `/turn` · `/debrief` | Two locals at odds: the scene, each turn (SSE; both parties, tension, trust), the mediation debrief |
+| `POST /api/voice/listen` · `/pronounce` · `/speak` | What was said and how it sounded; a pronunciation score; a local's line as WAV (501 if the model can't speak) |
+| `POST /api/postcard` | A painted postcard of the place (JPEG/PNG) |
+| `POST /api/classes` · `GET /api/classes/:code` · `POST …/join` · `POST …/results` · `GET …/dashboard` · `POST`/`DELETE …/assignments` | Classroom mode (the dashboard and assignments need the teacher's key) |
+
+Long calls (expedition, persona, scene, debrief) answer with **server-sent events when the browser asks for `text/event-stream`**: `progress`, then for expeditions an early `briefing`, then `result`. Clients that don't ask get one JSON body.
 
 ---
 
@@ -300,14 +373,32 @@ Compliance design (see the Google Maps Platform Terms §3.2.3 and Service Specif
 - **Learning**: Compass rating growth per skill; share of player turns with open questions or reflections; fewer `assumption`/`judgment` moves; calibration gap shrinking; recall accuracy; field missions completed.
 - **Experience**: encounter completion rate; return visits within 7 days; hint usage trend (should fall as skill rises); debrief helpfulness (thumbs up/down).
 - **Quality**: NPC rule adherence (eval suite in §7.5); verbatim-evidence rate in the mentor's quotes = 100%; stereotype-audit flags per 100 personas.
+- **Classes**: assignment completion; class averages per skill over time; how often the mentor names each growth area; the class's calibration gap (§4.6).
 
 ---
 
 ## 12. Roadmap
 
-- **v1 (this build)**: everything above, playable in Google or Open mode, with Claude, any OpenAI-compatible model, or Demo AI.
-- **v1.1**: faster arrival with thinking models (§7.4); correct macron letters (ā ē ī ō ū) in the display font; richer voice mode; photorealistic 3D fly-ins (`Map3DElement`); more postcards; localization of the interface.
-- **v2**: classroom mode (teacher-assigned expeditions and focus skills, a class debrief view); two-person mediation scenes; Pro agent-tools options (review-based place insights); an "explain the debrief" follow-up chat with the mentor.
+- **v1**: the core loop, playable in Google or Open mode, with Claude, any OpenAI-compatible model, or Demo AI.
+- **v2 (this build)**: everything that was planned for v1.1 and v2.
+  - Faster arrival: thinking controls, a model per task, live progress, two-stage briefing (§7.4).
+  - Correct macron letters.
+  - Richer voice mode: speech with delivery, pronunciation practice, voices per local (§7.6).
+  - 3D fly-ins.
+  - 33 postcards across six continents, plus painted postcard souvenirs (§7.7).
+  - The interface and the AI in English, Spanish and Simplified Chinese (§7.8).
+  - Classroom mode with a class debrief view.
+  - Mediation scenes (§5.1).
+  - Questions to the mentor (§4.4).
+  - Walking routes and localized place summaries, in place of the review insights the agent tools don't offer (§8).
+- **Next**:
+  - the three steps the v2 measurements point to: bounded outputs, the heard words first, and the time to the briefing (§7.4);
+  - a live run of the Maps agent tools and walking routes, with a server key (§8);
+  - spoken locals once a speaking voice model is configured, verified live;
+  - a live evaluation pass with Claude (§7.5);
+  - more interface languages;
+  - a shared store so classroom mode can run on several instances;
+  - mediation and voice on the Android test devices.
 
 ## References
 
