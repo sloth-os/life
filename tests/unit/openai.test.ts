@@ -107,6 +107,14 @@ describe("OpenAIGameAI", () => {
     expect(JSON.stringify(calls[1]!.body.messages)).toContain("wasn't valid JSON");
   });
 
+  it("asks again once when the reply is an empty object", async () => {
+    // Seen live from qwen3.8-omni-flash: "{}" in json_schema mode, which coercion would accept.
+    const { ai, calls } = setup((_call, i) => (i === 0 ? streamed("{}") : streamed(JSON.stringify({ skill: "empathy", observation: "o", suggestion: "s", example: "e" }))));
+    await expect(ai.coachHint(turnRequest())).resolves.toMatchObject({ skill: "empathy" });
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(calls[1]!.body.messages)).toContain("That reply was empty");
+  });
+
   it("steps down once when concurrent calls hit the same rejection", async () => {
     const { ai, calls, logs } = setup((call) =>
       (call.body.response_format as { type?: string } | undefined)?.type

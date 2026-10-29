@@ -85,6 +85,12 @@ type Def = { type: string; shape?: Record<string, z.ZodType>; element?: z.ZodTyp
 const defOf = (schema: z.ZodType) => (schema as unknown as { _zod: { def: Def } })._zod.def;
 
 /** Make a model's reply fit the schema: fill missing fields, fix enum casing or fall back, coerce scalars. */
+/** `{}` or `[]`: a reply with nothing in it. */
+function isEmptyJson(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length === 0;
+  return typeof value === "object" && value !== null && Object.keys(value).length === 0;
+}
+
 export function coerceToSchema(schema: z.ZodType, value: unknown): unknown {
   const def = defOf(schema);
   switch (def.type) {
@@ -230,11 +236,17 @@ export class OpenAIGameAI implements GameAI {
         body = this.#body(run, run.messages, mode);
         let text = await this.#complete(run, body);
         let data: unknown;
+        let problem: string | null = null;
         try {
           data = extractJson(text);
+          if (isEmptyJson(data)) problem = "That reply was empty. Reply again with the complete JSON object, every field filled in.";
         } catch {
-          // One repair round: some models wrap or truncate JSON when not constrained.
-          const retry = [...run.messages, { role: "assistant" as const, content: text }, { role: "user" as const, content: "That wasn't valid JSON. Reply again with only the JSON object." }];
+          problem = "That wasn't valid JSON. Reply again with only the JSON object.";
+        }
+        if (problem) {
+          // One repair round: some models wrap or truncate JSON when not constrained, and some now
+          // and then answer with an empty object, which coercion would accept as a reply.
+          const retry = [...run.messages, { role: "assistant" as const, content: text }, { role: "user" as const, content: problem }];
           text = await this.#complete({ ...run, stream: undefined }, this.#body(run, retry, mode));
           data = extractJson(text);
         }

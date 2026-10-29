@@ -218,7 +218,7 @@ flowchart TB
 Any server that speaks the Chat Completions API (OpenAI, model gateways, vLLM, Ollama) can play the three agents through the official `openai` SDK, with the same prompts as Claude. Servers differ in what they support, so the provider adapts:
 - **Every call streams.** Thinking models can reason for minutes before their first output token. A non-streamed request stays silent all that time and runs into time-to-headers timeouts, which is what hung the first live run. Streaming also lets the NPC's `reply` reach the browser as it is written, as with Claude.
 - **Structured output degrades gracefully.** It starts with strict `json_schema`, derived from the Zod schemas with every object closed and fully required. If the server rejects that, it tries `json_object`, then plain text with the schema in the prompt. A rejected mode is remembered for the life of the process.
-- **Replies are repaired before validation.** Reasoning in `<think>` tags and code fences is stripped. Missing fields are filled, and loose enum values are matched (`"Warm"` → `warm`) or replaced. A reply that isn't JSON gets one repair round. The engine then validates and clamps as usual.
+- **Replies are repaired before validation.** Reasoning in `<think>` tags and code fences is stripped. Missing fields are filled, and loose enum values are matched (`"Warm"` → `warm`) or replaced. A reply that isn't JSON, or is an empty object (seen live from `qwen3.8-omni-flash`), gets one repair round. The engine then validates and clamps as usual, and asks for a persona once more if it came back without insights.
 - **Claude-only features are absent.** There are no prompt-caching hints (many servers cache prefixes on their own) and no server-side refusal fallback. Refusals and content filters surface as errors.
 - **Calls are observable.** Each call logs time to first token, total time, reasoning size and finish reason. `scripts/probe-ai.ts` checks which structured-output modes a server accepts in seconds.
 - **Thinking is a per-task choice** (§7.4), and **each task can use its own model** (`AI_MODEL_<TASK>`).
@@ -252,12 +252,12 @@ Conversation is usable at this speed. Arrival takes more than ten times its targ
 | Step | Total |
 |---|---|
 | Expedition | 9–20 s (first token usually after about 2 s, once after 7 s) |
-| Persona (each) | 13–19 s |
+| Persona (each) | 13–24 s |
 | Mediation scene | about 11 s |
-| NPC reply | 3–9 s |
+| NPC reply | 3–11 s |
 | Debrief | 9–14 s |
 
-The real-services expedition test went from 8.5–11 minutes to about 1. With voice and a postcard it now takes about 2.5 minutes; painting a postcard takes 45–65 s of that. Probing `qwen3.8-omni-flash` showed the same pattern on tiny requests: 1.1–2.4 s with thinking off, 3–5.5 s with it.
+The real-services expedition test went from 8.5–11 minutes to about 1. With voice and a postcard it now takes 2.5–3 minutes; painting a postcard takes 45–75 s of that. Probing `qwen3.8-omni-flash` showed the same pattern on tiny requests: 1.1–2.4 s with thinking off, 3–5.5 s with it.
 
 ### 7.5 Evaluation plan (for prompt iteration)
 - **Partner realism**: on scripted learner transcripts (rude, generic, excellent), check that rapport moves in the right direction, insights are withheld before thresholds, and boundaries hold.

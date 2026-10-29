@@ -159,7 +159,7 @@ It records no traces, because they would capture the browser Maps key. The gatew
 
 The tests run without network or keys:
 - **Claude**: the real Anthropic SDK with a fake `fetch` serving streamed responses. Checks the request shape (model, effort, structured output schema, caching, fallback beta) and the handling of refusals, truncation, schema violations and rate limits.
-- **OpenAI-compatible**: the real OpenAI SDK with a fake `fetch`. Covers strict JSON-schema requests, streaming, stepping down to JSON mode when a server rejects schemas, `<think>` blocks and code fences, coercing loose enum values, a repair round for non-JSON replies, and error mapping.
+- **OpenAI-compatible**: the real OpenAI SDK with a fake `fetch`. Covers strict JSON-schema requests, streaming, stepping down to JSON mode when a server rejects schemas, `<think>` blocks and code fences, coercing loose enum values, a repair round for non-JSON or empty replies, and error mapping.
 - **Maps agent tools**: our MCP client against a local MCP server with the same tool names and argument shapes.
 - **API**: the full HTTP flow through the real engine with Demo AI, including SSE streaming (progress, the early briefing), access codes, rate limiting, voice routes and postcards.
 - **Voice and images**: the voice service against a fake omni server (audio out and in, a model that can't speak, data-URI and plain base64 input), and the image gateway client (task polling, inline and remote images, refused outputs).
@@ -190,7 +190,7 @@ docs/          DESIGN.md: research, learning design, AI design, compliance
   - a Seedream postcard painted through mm-gateway;
   - a whole mediation.
 
-  With thinking off, an expedition takes 9–20 s, a persona 13–19 s, a chat reply 3–9 s and a debrief 9–14 s. The briefing shows while the locals are still being written. `qwen3.8-max` with thinking took about 4 minutes per expedition (`docs/DESIGN.md` §7.4).
+  With thinking off, an expedition takes 9–20 s, a persona 13–24 s, a chat reply 3–11 s and a debrief 9–14 s. The briefing shows while the locals are still being written. `qwen3.8-max` with thinking took about 4 minutes per expedition (`docs/DESIGN.md` §7.4).
 - **Claude is not yet verified live.** It is tested against the SDK's request and streaming contract with simulated responses. Prompt quality still needs a **live evaluation pass** with a real key (plan in `docs/DESIGN.md` §7.5).
 - **Voices**: the org's omni model hears but doesn't speak (its server rejects audio output), so locals use the browser's voices there. Voices from a model that speaks (gpt-4o-audio, for example) are tested only against a simulated server so far.
 - **Maps agent tools have no live run yet**, and neither do walking routes. Google documents their inputs but not all output fields. The parser accepts several shapes and logs the result keys on first use; check the logs once with a `GOOGLE_MAPS_SERVER_KEY`.

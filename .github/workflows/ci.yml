@@ -153,8 +153,9 @@ jobs:
     if: needs.real-check.outputs.configured == 'true'
     timeout-minutes: 45
     env:
-      # The org's omni model plays every agent and speaks and listens; its settings map onto the
-      # app's provider-neutral AI_* variables (and VOICE_MODEL, which shares AI_* otherwise).
+      # The org's omni model plays every agent and listens (its server rejects audio output, so
+      # locals use the browser's voice). Its settings map onto the app's provider-neutral AI_*
+      # variables, and VOICE_MODEL shares the AI_* endpoint and key.
       AI_PROVIDER: ${{ vars.OMNI_API_FORMAT }}
       AI_MODEL: ${{ vars.OMNI_MODEL }}
       AI_BASE_URL: ${{ vars.OMNI_BASE_URL }}
