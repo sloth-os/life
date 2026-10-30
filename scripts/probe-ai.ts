@@ -12,6 +12,7 @@ import { thinkingFields } from "../server/ai/openai.ts";
 import { VoiceService, wavDurationMs, wordOverlap } from "../server/ai/voice.ts";
 import { ImageGateway } from "../server/images.ts";
 import { MapsAgentTools } from "../server/grounding/mapsAgentTools.ts";
+import type { LatLng } from "../shared/schemas.ts";
 
 // What the game would run with: the environment, .env and anything saved on the settings page.
 const config = await loadEffectiveConfig();
@@ -145,24 +146,39 @@ async function probeMaps(): Promise<void> {
   // The client logs each tool's result keys the first time, which is what the parser has to fit.
   const tools = new MapsAgentTools({ apiKey: config.googleMapsServerKey, log: (m) => console.log(m), version: config.version });
   const kyoto = { lat: 35.005, lng: 135.7649 };
-  try {
-    let started = Date.now();
-    const found = await tools.searchPlaces("food market near Nishiki Market, Kyoto", kyoto, 2000, "en");
-    const withLinks = found.places.filter((p) => p.mapsUrl).length;
-    console.log(`maps search_places: ${found.places.length} places (${withLinks} with Google Maps links), summary ${found.summary.length} chars, in ${Date.now() - started}ms`);
-    if (!found.places.length) failures++;
-    started = Date.now();
-    const weather = await tools.lookupWeather(kyoto);
-    console.log(`maps lookup_weather: ${JSON.stringify(weather.summary)} in ${Date.now() - started}ms`);
-    const to = found.places.find((p) => p.location)?.location;
-    if (to) {
-      started = Date.now();
-      const walk = await tools.walkingRoute(kyoto, to);
-      console.log(`maps compute_routes (walk): ${walk ? `${walk.minutes} min, ${walk.meters} m` : "no route"} in ${Date.now() - started}ms`);
+  // Each tool on its own, so one failing doesn't hide how the others answer.
+  const step = async (name: string, run: () => Promise<string>): Promise<boolean> => {
+    const started = Date.now();
+    try {
+      console.log(`maps ${name}: ${await run()} in ${Date.now() - started}ms`);
+      return true;
+    } catch (error) {
+      console.log(`maps ${name} failed: ${describe(error)}`);
+      return false;
     }
-  } catch (error) {
-    console.log(`maps failed: ${describe(error)}`);
-    failures++;
+  };
+  try {
+    let to: LatLng | undefined;
+    const searched = await step("search_places", async () => {
+      const found = await tools.searchPlaces("food market near Nishiki Market, Kyoto", kyoto, 2000, "en");
+      if (!found.places.length) throw new Error(`no places (summary: ${found.summary.slice(0, 120)})`);
+      to = found.places.find((p) => p.location)?.location;
+      return `${found.places.length} places (${found.places.filter((p) => p.mapsUrl).length} with Google Maps links), summary ${found.summary.length} chars`;
+    });
+    if (!searched) failures++;
+    // Google's weather doesn't cover every place (it has none for Kyoto); the game then uses
+    // Open-Meteo's. The tool works if it answers somewhere it covers.
+    const weather = (where: string, at: LatLng) => step(`lookup_weather (${where})`, async () => JSON.stringify((await tools.lookupWeather(at)).summary));
+    if (!(await weather("Kyoto", kyoto)) && !(await weather("London", { lat: 51.5074, lng: -0.1278 }))) failures++;
+    if (to) {
+      const target = to;
+      const walked = await step("compute_routes (walk)", async () => {
+        const walk = await tools.walkingRoute(kyoto, target);
+        if (!walk) throw new Error("no route");
+        return `${walk.minutes} min, ${walk.meters} m`;
+      });
+      if (!walked) failures++;
+    }
   } finally {
     await tools.close();
   }

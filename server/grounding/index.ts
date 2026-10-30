@@ -229,13 +229,15 @@ export class GroundingService {
       }
     }
 
-    // WX: weather — Google's in Google mode, Open-Meteo otherwise.
+    // WX: weather — Google's in Google mode, Open-Meteo otherwise, and where Google has none: its
+    // weather doesn't cover every place (it answered "not supported" for Kyoto). Open-Meteo is
+    // never asked about coordinates from a Google search, so those go without.
     let weather: Weather | undefined;
     let weatherDetails: string | undefined;
     if (googleWeather?.summary) {
       weather = { summary: googleWeather.summary, tempC: googleWeather.tempC, condition: googleWeather.condition, isDay: googleWeather.isDay, provider: "google", attribution: "Weather: Google Maps" };
       weatherDetails = googleWeather.details;
-    } else if (!google && conditions.weather) {
+    } else if (conditions.weather) {
       weather = conditions.weather;
     }
     if (weather) sources.push({ id: "WX", kind: "weather", title: `Current weather: ${weather.summary}`, attribution: weather.attribution });
