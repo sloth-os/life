@@ -22,10 +22,21 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     // The Android device reaches the server from Docker, so the mobile run sets E2E_HOST=0.0.0.0.
-    env: { E2E_PORT: String(port), E2E_HOST: process.env.E2E_HOST ?? "127.0.0.1" },
+    // A stand-in voice model lets voice mode run without a real one (tests/e2e/fakeVoice.ts).
+    env: { E2E_PORT: String(port), E2E_HOST: process.env.E2E_HOST ?? "127.0.0.1", E2E_FAKE_VOICE: "1" },
   },
   projects: [
-    { name: "desktop", testIgnore: /android\.spec\.ts/, use: { ...devices["Desktop Chrome"], viewport: { width: 1366, height: 860 } } },
+    {
+      name: "desktop",
+      testIgnore: /android\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1366, height: 860 },
+        // Chromium's fake microphone (a tone) for voice mode; the stand-in model hears it as a line.
+        permissions: ["microphone"],
+        launchOptions: { args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] },
+      },
+    },
     // Chromium on a real Android device (redroid); see tests/e2e/android-device.ts.
     { name: "mobile", testMatch: /android\.spec\.ts/, timeout: 300_000 },
   ],

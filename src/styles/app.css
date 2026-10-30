@@ -25,6 +25,12 @@
   color-scheme: light;
 }
 
+/* Japanese shares characters with Chinese but draws many of them differently. */
+:root:lang(ja) {
+  --font-display: "Literata", "Fraunces", Georgia, "Times New Roman", "Noto Sans JP", serif;
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --paper: #0f1420;
@@ -2836,4 +2842,242 @@ textarea:focus {
 
 .notice--error {
   border-color: var(--danger, #c0392b);
+}
+
+/* ── Server settings ──────────────────────────────────────────────────── */
+.server-settings {
+  padding-bottom: 24px;
+}
+
+.server-settings__head h1 {
+  margin: 0;
+}
+
+.server-settings .card {
+  max-width: 860px;
+}
+
+.server-settings input[type="password"],
+.server-settings input[type="url"],
+.server-settings input[type="number"],
+.server-settings select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 10px 12px;
+  min-height: 42px;
+}
+
+.server-settings input:focus,
+.server-settings select:focus {
+  border-color: var(--accent-2);
+}
+
+.server-link {
+  display: block;
+  margin: 14px auto 0;
+}
+
+.unlock {
+  max-width: 520px;
+}
+
+.facts__row {
+  display: contents;
+}
+
+.card--warning {
+  border-color: color-mix(in srgb, var(--watch) 45%, var(--line));
+  background: color-mix(in srgb, var(--watch) 7%, var(--surface));
+}
+
+.card--warning ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.setting-group__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setting-group__head h2 {
+  margin: 0;
+}
+
+.setting {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.setting__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+
+.setting__label {
+  font-weight: 600;
+}
+
+.setting__label code {
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 6px;
+  overflow-wrap: anywhere;
+}
+
+.setting__control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setting__control > input,
+.setting__control > select {
+  flex: 1;
+  min-width: 0;
+}
+
+.setting__toggle {
+  margin: 0;
+  flex: 1;
+}
+
+.setting__actions {
+  display: inline-flex;
+  gap: 10px;
+  flex: none;
+}
+
+.setting__readonly {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.setting__help {
+  margin: 6px 0 0;
+}
+
+.setting__problem {
+  color: var(--bad);
+  font-size: 0.86rem;
+  font-weight: 600;
+  margin: 6px 0 0;
+}
+
+.has-problem input,
+.has-problem select {
+  border-color: var(--bad) !important;
+}
+
+.source {
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.source--page {
+  background: color-mix(in srgb, var(--accent-2) 14%, var(--surface));
+  color: var(--accent-2);
+}
+
+.source.is-pending {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.task-table__wrap {
+  overflow-x: auto;
+}
+
+.task-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.task-table th,
+.task-table td {
+  text-align: left;
+  padding: 8px 6px;
+  border-top: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.task-table td {
+  min-width: 140px;
+}
+
+.task-table td .source {
+  display: inline-block;
+  margin-top: 4px;
+}
+
+.probe {
+  margin: 8px 0 4px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.probe--ok {
+  background: color-mix(in srgb, var(--good) 12%, var(--surface));
+}
+
+.probe--failed {
+  background: color-mix(in srgb, var(--bad) 12%, var(--surface));
+}
+
+.save-bar {
+  position: sticky;
+  bottom: 16px;
+  max-width: 860px;
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 18px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  z-index: 20;
+}
+
+.save-bar__status {
+  flex: 1;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+@media (max-width: 760px) {
+  .setting__control {
+    flex-wrap: wrap;
+  }
+
+  .save-bar {
+    border-radius: 18px;
+    flex-wrap: wrap;
+  }
+
+  .save-bar__status {
+    flex-basis: 100%;
+  }
 }

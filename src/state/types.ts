@@ -22,7 +22,7 @@ import type { SkillId } from "../../shared/skills.ts";
 import type { Lang } from "../i18n/index.ts";
 import type { LensId, ScenarioId } from "../../shared/world.ts";
 
-export type Screen = "title" | "onboarding" | "world" | "expedition" | "encounter" | "mediation" | "debrief" | "journal" | "compass" | "classroom" | "settings";
+export type Screen = "title" | "onboarding" | "world" | "expedition" | "encounter" | "mediation" | "debrief" | "journal" | "compass" | "classroom" | "settings" | "server";
 
 export interface PlayerProfile {
   name: string;

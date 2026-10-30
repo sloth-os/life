@@ -1,9 +1,7 @@
-import { existsSync } from "node:fs";
+import { AI_TASKS, DEFAULT_EFFORT, DEFAULT_MAX_TOKENS, EFFORTS, type AiTask, type Effort } from "../shared/settings.ts";
 
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
-/** Model calls the game makes; each can have its own model and effort. */
-export const AI_TASKS = ["expedition", "persona", "scene", "turn", "hint", "debrief", "ask"] as const;
-export type AiTask = (typeof AI_TASKS)[number];
+export { AI_TASKS, type AiTask, type Effort };
+export const VERSION = "0.3.0";
 export type AiProvider = "anthropic" | "openai" | "demo";
 export type JsonMode = "json_schema" | "json_object" | "text";
 /** auto: think only where the task's effort is high; off: never; model: leave it to the model. */
@@ -12,8 +10,10 @@ export type Thinking = "auto" | "off" | "model";
 export type ThinkingStyle = "qwen" | "openai" | "none";
 
 export interface VoiceConfig {
-  /** An OpenAI-compatible model that hears and speaks (Qwen-Omni, gpt-4o-audio…). */
-  model: string;
+  /** An OpenAI-compatible model that hears (and perhaps speaks): Qwen-Omni, gpt-4o-audio… */
+  model?: string;
+  /** A text-to-speech model on the speech endpoint (/audio/speech) for the locals' voices. */
+  ttsModel?: string;
   baseUrl?: string;
   apiKey?: string;
   /** Voice names: the first for locals using she/her, the second for he/him; others take turns. */
@@ -47,6 +47,8 @@ export interface ServerConfig {
   /** AI_THINKING_STYLE, or "auto" to tell from each task's model name. */
   thinkingStyle: ThinkingStyle | "auto";
   effort: Record<AiTask, Effort>;
+  /** Output caps per task for OpenAI-compatible servers (tokens; 0 for none). */
+  maxTokens: Record<AiTask, number>;
   voice?: VoiceConfig;
   images?: ImageConfig;
   mapsMode: "google" | "open";
@@ -66,16 +68,16 @@ export interface ServerConfig {
   trustProxy: boolean | number;
   userAgent: string;
   wikipediaLang: string;
+  /** Server settings in the browser, behind the admin key (SETTINGS_PAGE=off turns them off). */
+  settingsPage: boolean;
+  /** The settings page's key; without one the server makes one and prints it once. */
+  adminKey?: string;
+  /** A shared Postgres store for settings and classes, so several instances can serve one game. */
+  databaseUrl?: string;
 }
-
-const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
 
 function pickEffort(value: string | undefined, fallback: Effort): Effort {
   return value && (EFFORTS as readonly string[]).includes(value) ? (value as Effort) : fallback;
-}
-
-export function loadDotEnv(path = ".env"): void {
-  if (existsSync(path)) process.loadEnvFile(path);
 }
 
 const PROVIDER_ALIASES: Record<string, AiProvider | "auto"> = {
@@ -137,17 +139,23 @@ export function detectThinkingStyle(model: string): ThinkingStyle {
   return "none";
 }
 
-/** Voice needs a model that hears and speaks; it shares the AI endpoint and key unless VOICE_* says otherwise. */
+/**
+ * Voice: a model that hears (VOICE_MODEL) and, for the locals' voices, either that model or a
+ * text-to-speech model (VOICE_TTS_MODEL). It shares the AI endpoint and key unless VOICE_* says otherwise.
+ */
 export function resolveVoice(env: NodeJS.ProcessEnv, ai: AiSettings): VoiceConfig | undefined {
   const value = valueOf(env);
   const model = value("VOICE_MODEL");
-  if (!model || value("VOICE") === "off") return undefined;
+  const ttsModel = value("VOICE_TTS_MODEL");
+  if ((!model && !ttsModel) || value("VOICE") === "off") return undefined;
   const sharesEndpoint = ai.aiProvider === "openai" && (!value("VOICE_BASE_URL") || value("VOICE_BASE_URL") === ai.aiBaseUrl);
   return {
     model,
+    ttsModel,
     baseUrl: value("VOICE_BASE_URL") ?? (ai.aiProvider === "openai" ? ai.aiBaseUrl : undefined),
     apiKey: value("VOICE_API_KEY") ?? (sharesEndpoint ? ai.aiApiKey : undefined),
-    voices: (value("VOICE_VOICES") ?? "Cherry,Ethan")
+    // OpenAI's speech models have their own voices; Qwen's (and most omni models') are the default.
+    voices: (value("VOICE_VOICES") ?? (ttsModel && /^(tts-|gpt-.*tts)/i.test(ttsModel) ? "coral,ash" : "Cherry,Ethan"))
       .split(",")
       .map((v) => v.trim())
       .filter(Boolean),
@@ -180,7 +188,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: string[] 
   const mapsMode = mapsSetting === "open" || !browserKey ? "open" : "google";
 
   return {
-    version: "0.2.0",
+    version: VERSION,
     port: Number(env.PORT ?? 8787),
     dev: argv.includes("--dev") || env.NODE_ENV === "development",
     ...ai,
@@ -188,15 +196,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: string[] 
     openaiJsonMode: jsonMode === "json_object" || jsonMode === "text" ? jsonMode : "json_schema",
     thinking: thinking === "off" || thinking === "model" ? thinking : "auto",
     thinkingStyle: (["qwen", "openai", "none"] as const).find((s) => s === value("AI_THINKING_STYLE")?.toLowerCase()) ?? "auto",
-    effort: {
-      expedition: pickEffort(env.EFFORT_EXPEDITION, "medium"),
-      persona: pickEffort(env.EFFORT_PERSONA, "medium"),
-      scene: pickEffort(env.EFFORT_SCENE, "medium"),
-      turn: pickEffort(env.EFFORT_TURN, "low"),
-      hint: pickEffort(env.EFFORT_HINT, "low"),
-      debrief: pickEffort(env.EFFORT_DEBRIEF, "medium"),
-      ask: pickEffort(env.EFFORT_ASK, "low"),
-    },
+    effort: Object.fromEntries(AI_TASKS.map((task) => [task, pickEffort(env[`EFFORT_${task.toUpperCase()}`], DEFAULT_EFFORT[task])])) as Record<AiTask, Effort>,
+    maxTokens: Object.fromEntries(
+      AI_TASKS.map((task) => {
+        const set = value(`AI_MAX_TOKENS_${task.toUpperCase()}`);
+        return [task, set !== undefined && /^\d+$/.test(set) ? Number(set) : DEFAULT_MAX_TOKENS[task]];
+      }),
+    ) as Record<AiTask, number>,
     voice: resolveVoice(env, ai),
     images: resolveImages(env),
     mapsMode,
@@ -209,7 +215,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: string[] 
     accessCode: value("ACCESS_CODE"),
     rateLimitPer10Min: Number(env.RATE_LIMIT_PER_10MIN ?? 120),
     trustProxy: env.TRUST_PROXY === "true" ? 1 : Number(env.TRUST_PROXY) > 0 ? Number(env.TRUST_PROXY) : false,
-    userAgent: value("APP_USER_AGENT") ?? "CommonGround/0.2 (educational game; https://github.com/sloth-os/life)",
+    userAgent: value("APP_USER_AGENT") ?? `CommonGround/${VERSION.split(".").slice(0, 2).join(".")} (educational game; https://github.com/sloth-os/life)`,
     wikipediaLang: value("WIKIPEDIA_LANG") ?? "en",
+    settingsPage: value("SETTINGS_PAGE") !== "off",
+    adminKey: value("ADMIN_KEY"),
+    databaseUrl: value("DATABASE_URL"),
   };
 }

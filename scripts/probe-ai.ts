@@ -5,13 +5,14 @@
 //   node scripts/probe-ai.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import OpenAI from "openai";
-import { detectThinkingStyle, loadConfig, loadDotEnv } from "../server/config.ts";
+import { detectThinkingStyle } from "../server/config.ts";
+import { loadEffectiveConfig } from "../server/settings/load.ts";
 import { thinkingFields } from "../server/ai/openai.ts";
 import { VoiceService, wavDurationMs, wordOverlap } from "../server/ai/voice.ts";
 import { ImageGateway } from "../server/images.ts";
 
-loadDotEnv();
-const config = loadConfig();
+// What the game would run with: the environment, .env and anything saved on the settings page.
+const config = await loadEffectiveConfig();
 const OUT = "test-results/probe";
 await mkdir(OUT, { recursive: true });
 let failures = 0;

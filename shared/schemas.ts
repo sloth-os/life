@@ -479,6 +479,8 @@ export interface AppFeatures {
 
 export interface AppConfig {
   version: string;
+  /** Changes whenever the server's settings do, so a browser can tell its copy is stale. */
+  revision: number;
   mapsMode: "google" | "open";
   aiMode: "claude" | "openai" | "demo";
   model?: string;
@@ -487,6 +489,8 @@ export interface AppConfig {
   googleMapId?: string;
   placeGrounding: "google" | "wikipedia";
   accessCodeRequired: boolean;
+  /** Whether the server's settings can be changed in the browser (with the settings key). */
+  settingsPage: boolean;
 }
 
 export interface ApiErrorBody {

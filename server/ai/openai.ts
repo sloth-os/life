@@ -183,7 +183,28 @@ export function thinkingFields(style: ThinkingStyle, thinking: Thinking, effort:
 }
 
 /** Fields the game sends only to save time; a server that rejects one is asked again without it. */
-const OPTIONAL_FIELDS = ["enable_thinking", "reasoning_effort"] as const;
+const OPTIONAL_FIELDS = ["enable_thinking", "reasoning_effort", "max_tokens", "max_completion_tokens"] as const;
+
+/** Extra room under the cap for a task that reasons, where servers count reasoning as output. */
+export const THINKING_ALLOWANCE = 16_000;
+/** Visible characters per token of cap before the game stops a server that ignores the cap. */
+const CHARS_PER_TOKEN_GUARD = 6;
+
+/** An answer stopped at its length limit (by the server, or by the game's own guard). */
+class CutOff extends Error {
+  readonly reasoning: number;
+  readonly visible: number;
+  constructor(reasoning: number, visible: number) {
+    super("the response was cut off");
+    this.reasoning = reasoning;
+    this.visible = visible;
+  }
+}
+
+/** OpenAI's reasoning models take max_completion_tokens; most other servers take max_tokens. */
+export function tokenFieldFor(model: string): "max_tokens" | "max_completion_tokens" {
+  return /^(o[1-9]|gpt-5)/i.test(model) ? "max_completion_tokens" : "max_tokens";
+}
 
 export interface OpenAIGameAIOptions {
   client: OpenAI;
@@ -194,6 +215,8 @@ export interface OpenAIGameAIOptions {
   thinking?: Thinking;
   thinkingStyle?: ThinkingStyle | "auto";
   effort?: Partial<Record<AiTask, Effort>>;
+  /** Output caps per task, in tokens (0 or absent: none). */
+  maxTokens?: Partial<Record<AiTask, number>>;
   log?: (message: string) => void;
 }
 
@@ -206,6 +229,8 @@ interface RunOptions<S extends z.ZodType> {
   /** Surface one string field as it is written (the NPC's reply). */
   stream?: { field: string; onValue: (value: string) => void };
   onProgress?: OnProgress;
+  /** A retry after a cut-off answer: ask for brevity (and, if it was reasoning that ran long, allow for it). */
+  brief?: boolean;
 }
 
 export class OpenAIGameAI implements GameAI {
@@ -213,6 +238,10 @@ export class OpenAIGameAI implements GameAI {
   readonly #opts: OpenAIGameAIOptions;
   #jsonMode: JsonMode;
   readonly #dropped = new Set<string>();
+  /** Which field carries the cap, once a server has told us it wants the other one. */
+  #tokenField: "max_tokens" | "max_completion_tokens" | null = null;
+  /** Tasks whose model reasons even when the game doesn't ask it to: their cap gets the allowance. */
+  readonly #reasons = new Set<AiTask>();
 
   constructor(opts: OpenAIGameAIOptions) {
     this.#opts = opts;
@@ -254,9 +283,21 @@ export class OpenAIGameAI implements GameAI {
         if (!result.success) throw new AiOutputError(result.error.issues[0]?.message ?? "invalid reply");
         return result.data;
       } catch (error) {
+        if (error instanceof CutOff && !run.brief) {
+          // One more try, briefer. If reasoning is what filled the cap, the model reasons on its own: allow for it.
+          if (error.reasoning > error.visible) this.#reasons.add(run.task);
+          this.#opts.log?.(`[openai] ${run.task}: cut off at the length limit (${error.visible} chars, ${error.reasoning} reasoning); asking again, briefly`);
+          run = { ...run, brief: true };
+          continue;
+        }
         if (error instanceof OpenAI.BadRequestError || error instanceof OpenAI.UnprocessableEntityError) {
           // A rejected speed-up field goes first: the answer format may be fine.
           const field = OPTIONAL_FIELDS.find((f) => f in body && error.message.includes(f));
+          if (field === "max_tokens" && error.message.includes("max_completion_tokens")) {
+            this.#tokenField = "max_completion_tokens";
+            this.#opts.log?.(`[openai] ${run.task}: the server wants max_completion_tokens; sending the cap that way`);
+            continue;
+          }
           if (field) {
             this.#dropped.add(field);
             this.#opts.log?.(`[openai] ${run.task}: the server rejected ${field} (${error.status}); not sending it again`);
@@ -280,7 +321,7 @@ export class OpenAIGameAI implements GameAI {
           }
         }
         this.#opts.log?.(`[openai] ${run.task} failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`);
-        throw toHttpError(error);
+        throw toHttpError(error instanceof CutOff ? new AiOutputError("the response was cut off") : error);
       }
     }
   }
@@ -289,31 +330,50 @@ export class OpenAIGameAI implements GameAI {
     return this.#opts.models?.[task] ?? this.#opts.model;
   }
 
+  /** The output cap for a task, with room for reasoning where the model reasons. */
+  capFor(task: AiTask, thinking: Record<string, unknown> = {}): number {
+    const base = this.#opts.maxTokens?.[task] ?? 0;
+    if (!base) return 0;
+    const reasons = this.#opts.thinking === "model" || thinking.enable_thinking === true || "reasoning_effort" in thinking || this.#reasons.has(task);
+    return base + (reasons ? THINKING_ALLOWANCE : 0);
+  }
+
   #body<S extends z.ZodType>(run: RunOptions<S>, messages: Message[], mode: JsonMode): Record<string, unknown> {
     const model = this.#model(run.task);
     const style = !this.#opts.thinkingStyle || this.#opts.thinkingStyle === "auto" ? detectThinkingStyle(model) : this.#opts.thinkingStyle;
     const thinking = thinkingFields(style, this.#opts.thinking ?? "auto", this.#opts.effort?.[run.task] ?? "medium");
     for (const field of this.#dropped) delete thinking[field];
+    const cap = this.capFor(run.task, thinking);
+    const tokenField = this.#tokenField ?? tokenFieldFor(model);
+    const brevity = run.brief ? "\n\nBe brief: an earlier answer to this request ran past the length limit and was cut off. Keep every text field short and finish the JSON object." : "";
     return {
       model,
-      messages: [{ role: "system" as const, content: `${run.system}\n\n${schemaInstruction(run.schema)}` }, ...messages],
+      messages: [{ role: "system" as const, content: `${run.system}\n\n${schemaInstruction(run.schema)}${brevity}` }, ...messages],
       ...(mode === "json_schema"
         ? { response_format: { type: "json_schema" as const, json_schema: { name: run.task, schema: strictJsonSchema(run.schema), strict: true } } }
         : mode === "json_object"
           ? { response_format: { type: "json_object" as const } }
           : {}),
       ...thinking,
+      ...(cap && !this.#dropped.has(tokenField) ? { [tokenField]: cap } : {}),
     };
   }
 
   async #complete<S extends z.ZodType>(run: RunOptions<S>, body: Record<string, unknown>): Promise<string> {
     const started = Date.now();
     const { signal, stream, onProgress } = run;
+    // Our own guard against a server that ignores the cap: stop reading and cancel the request.
+    const cap = Number(body.max_tokens ?? body.max_completion_tokens ?? 0);
+    const guard = cap ? cap * CHARS_PER_TOKEN_GUARD : Infinity;
+    const local = new AbortController();
+    const stopLocal = () => local.abort();
+    signal?.addEventListener("abort", stopLocal, { once: true });
+    if (signal?.aborted) local.abort();
     // Always stream: some servers only stream thinking models, and a long generation keeps
     // the connection alive instead of idling into a timeout.
     const chunks = await this.#opts.client.chat.completions.create(
       { ...(body as unknown as OpenAI.ChatCompletionCreateParamsStreaming), stream: true },
-      { signal, timeout: 180_000 },
+      { signal: local.signal, timeout: 180_000 },
     );
     let text = "";
     let reasoning = 0;
@@ -331,6 +391,15 @@ export class OpenAIGameAI implements GameAI {
         text += delta.content;
       }
       finish = choice?.finish_reason ?? finish;
+      if (text.length > guard) {
+        const visible = stripThinking(text).length;
+        if (visible > guard) {
+          signal?.removeEventListener("abort", stopLocal);
+          local.abort();
+          this.#opts.log?.(`[openai] ${run.task} ${String(body.model)} ran past ${guard} chars (cap ${cap} tokens); stopped it`);
+          throw new CutOff(reasoning + text.length - visible, visible);
+        }
+      }
       if (stream || onProgress) {
         const visible = stripThinking(text);
         onProgress?.({ thinking: reasoning + (text.length - visible.length), output: visible });
@@ -343,13 +412,17 @@ export class OpenAIGameAI implements GameAI {
         }
       }
     }
+    signal?.removeEventListener("abort", stopLocal);
     // The SDK ends an aborted stream quietly; don't mistake the partial reply for a finished one.
     if (signal?.aborted) throw new OpenAI.APIUserAbortError();
     const thinking = "enable_thinking" in body ? ` enable_thinking=${String(body.enable_thinking)}` : "reasoning_effort" in body ? ` reasoning_effort=${String(body.reasoning_effort)}` : "";
     this.#opts.log?.(
-      `[openai] ${run.task} ${String(body.model)} ${String((body.response_format as { type?: string } | undefined)?.type ?? "text")}${thinking} first-token=${firstToken}ms total=${Date.now() - started}ms chars=${text.length} reasoning=${reasoning} finish=${finish ?? "?"}`,
+      `[openai] ${run.task} ${String(body.model)} ${String((body.response_format as { type?: string } | undefined)?.type ?? "text")}${thinking}${cap ? ` cap=${cap}` : ""} first-token=${firstToken}ms total=${Date.now() - started}ms chars=${text.length} reasoning=${reasoning} finish=${finish ?? "?"}`,
     );
-    if (finish === "length") throw new AiOutputError("the response was cut off");
+    if (finish === "length") {
+      const visible = stripThinking(text).length;
+      throw new CutOff(reasoning + text.length - visible, visible);
+    }
     if (finish === "content_filter") throw new AiRefusalError("content_filter");
     return text;
   }

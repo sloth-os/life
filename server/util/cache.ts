@@ -45,21 +45,25 @@ export class TtlCache<V> {
   }
 }
 
-/** Sliding-window rate limiter keyed by client (e.g. IP). */
+/** Sliding-window rate limiter keyed by client (e.g. IP). The limit can change (settings reload). */
 export class RateLimiter {
   readonly #hits = new Map<string, number[]>();
-  readonly #limit: number;
+  limit: number;
   readonly #windowMs: number;
 
   constructor(limit: number, windowMs: number) {
-    this.#limit = limit;
+    this.limit = limit;
     this.#windowMs = windowMs;
+  }
+
+  #recent(key: string, now: number): number[] {
+    return (this.#hits.get(key) ?? []).filter((t) => t > now - this.#windowMs);
   }
 
   /** Returns true if the request is allowed (and records it). */
   allow(key: string, now = Date.now()): boolean {
-    const recent = (this.#hits.get(key) ?? []).filter((t) => t > now - this.#windowMs);
-    if (recent.length >= this.#limit) {
+    const recent = this.#recent(key, now);
+    if (recent.length >= this.limit) {
       this.#hits.set(key, recent);
       return false;
     }
@@ -67,5 +71,10 @@ export class RateLimiter {
     this.#hits.set(key, recent);
     if (this.#hits.size > 10_000) this.#hits.clear();
     return true;
+  }
+
+  /** True when `key` has used up its limit (without counting this check). */
+  blocked(key: string, now = Date.now()): boolean {
+    return this.#recent(key, now).length >= this.limit;
   }
 }

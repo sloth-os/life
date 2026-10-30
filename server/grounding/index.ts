@@ -60,7 +60,7 @@ export interface GroundingDeps {
 const MAX_ARTICLES = 8;
 
 export class GroundingService {
-  readonly #deps: GroundingDeps;
+  #deps: GroundingDeps;
   /** Raw grounding is session-scoped: kept in memory briefly, never persisted. */
   readonly #packs = new TtlCache<GroundingPack>(2 * 60 * 60 * 1000, 200);
   // Open data is cached to spare the free services (and stay under their rate limits).
@@ -70,6 +70,15 @@ export class GroundingService {
 
   constructor(deps: GroundingDeps) {
     this.#deps = deps;
+  }
+
+  /** New settings (hot reload): the caches stay, so expeditions in progress keep their grounding. */
+  reconfigure(deps: Pick<GroundingDeps, "config" | "mapsTools">): void {
+    this.#deps = { ...this.#deps, ...deps };
+  }
+
+  get mapsTools(): MapsAgentTools | undefined {
+    return this.#deps.mapsTools;
   }
 
   get placeGrounding(): "google" | "wikipedia" {
