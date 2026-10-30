@@ -34,8 +34,10 @@ COPY --from=deps /app/node_modules node_modules
 COPY package.json ./
 COPY shared shared
 COPY server server
+# A new settings-page key when the one printed at first start is lost: docker exec <container> node scripts/settings-key.ts
+COPY scripts/settings-key.ts scripts/
 COPY --from=build /app/dist/client dist/client
-# Classroom mode keeps classes here: mount a volume to keep them across container restarts.
+# Settings saved on the settings page, and classes, are kept here: mount a volume to keep them.
 RUN mkdir -p /app/data && chown node:node /app/data
 VOLUME /app/data
 USER node

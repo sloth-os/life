@@ -15,8 +15,22 @@ const log = (message: string) => console.log(message);
 const processEnv = { ...process.env };
 const DOT_ENV = ".env";
 
+/**
+ * A configuration from these variables, or, if their AI settings can't run (an OpenAI-compatible
+ * provider without a model, say), the same with Demo AI: the server still starts, and the
+ * settings page can put it right.
+ */
+function configFrom(env: Record<string, string | undefined>, what: string): ServerConfig {
+  try {
+    return loadConfig(env);
+  } catch (error) {
+    log(`[settings] ${what} can't run (${error instanceof Error ? error.message : String(error)}); using Demo AI until that's fixed (on the settings page, for one)`);
+    return loadConfig({ ...env, AI_PROVIDER: "demo" });
+  }
+}
+
 // Where to listen, where to keep data and the settings key are read once, from the environment and .env.
-const boot = loadConfig(layerEnv(processEnv, readDotEnv(DOT_ENV), {}));
+const boot = configFrom(layerEnv(processEnv, readDotEnv(DOT_ENV), {}), "the environment's AI settings");
 const pool = boot.databaseUrl ? new pg.Pool({ connectionString: boot.databaseUrl, max: 10 }) : undefined;
 pool?.on("error", (error) => log(`[db] ${error.message}`));
 
@@ -28,13 +42,7 @@ const store: SettingsStore | undefined = await (pool ? PostgresSettingsStore.ope
 const pageValues = () => (boot.settingsPage ? (store?.current().values ?? {}) : {});
 if (!boot.settingsPage && Object.keys(store?.current().values ?? {}).length) log("[settings] SETTINGS_PAGE=off: values saved on the settings page are ignored");
 
-let initial: ServerConfig;
-try {
-  initial = loadConfig(layerEnv(processEnv, readDotEnv(DOT_ENV), pageValues()));
-} catch (error) {
-  log(`[settings] the saved settings can't run (${error instanceof Error ? error.message : String(error)}); starting from the environment alone`);
-  initial = boot;
-}
+const initial = Object.keys(pageValues()).length ? configFrom(layerEnv(processEnv, readDotEnv(DOT_ENV), pageValues()), "the saved AI settings") : boot;
 
 const runtime = await Runtime.start(initial, { log, pool });
 const settings = store ? new SettingsService({ store, runtime, processEnv, dotEnvPath: DOT_ENV, usePage: boot.settingsPage, log }) : undefined;

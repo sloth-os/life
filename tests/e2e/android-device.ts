@@ -53,7 +53,7 @@ export async function resetDisplay(device: AndroidDevice): Promise<void> {
   await device.shell("wm density reset");
 }
 
-export function launchBrowser(device: AndroidDevice, appUrl: string): Promise<BrowserContext> {
+export function launchBrowser(device: AndroidDevice, appUrl: string, extraArgs: string[] = []): Promise<BrowserContext> {
   return device.launchBrowser({
     pkg: BROWSER_PACKAGE,
     baseURL: appUrl,
@@ -62,8 +62,18 @@ export function launchBrowser(device: AndroidDevice, appUrl: string): Promise<Br
       // The test server is plain HTTP on a private address; treat it like a deployed HTTPS site.
       `--unsafely-treat-insecure-origin-as-secure=${new URL(appUrl).origin}`,
       "--disable-features=HttpsUpgrades,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults",
+      ...extraArgs,
     ],
   });
+}
+
+/**
+ * Chromium's fake microphone (a tone), for voice mode: the browser asks no questions and the
+ * stand-in voice model hears it as a line. Android also wants the app allowed to record.
+ */
+export async function allowFakeMicrophone(device: AndroidDevice): Promise<string[]> {
+  await device.shell(`pm grant ${BROWSER_PACKAGE} android.permission.RECORD_AUDIO`).catch(() => undefined);
+  return ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"];
 }
 
 /** Android logs for a failed run, attached to the report. */

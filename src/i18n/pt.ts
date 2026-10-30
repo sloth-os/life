@@ -653,6 +653,7 @@ export const pt: Translation = {
     "setting.WIKIPEDIA_LANG.help": "Qual Wikipédia descreve os lugares.",
     "error.adminKey": "Essa não é a chave de ajustes.",
     "error.settingsConflict": "Outra pessoa mudou os ajustes nesse meio-tempo. Eles foram recarregados: confira e salve de novo.",
+    "error.adminLocked": "Chaves erradas demais. Espere alguns minutos e tente de novo.",
     "error.settingsOff": "A página de ajustes está desativada neste servidor.",
     "expedition.otherMap": "Esta expedição foi planejada no Google Maps, que este servidor não usa mais. Os lugares dela não podem aparecer no mapa aberto, então comece uma nova expedição pelo mapa-múndi. Seu diário guarda o que você aprendeu.",
   },

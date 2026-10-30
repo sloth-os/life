@@ -389,10 +389,7 @@ export function ServerSettingsScreen() {
   );
   const pending = Object.keys(draft).length;
 
-  const back = () => {
-    if (window.location.hash === "#settings") history.replaceState(null, "", window.location.pathname + window.location.search);
-    go(game.player ? "settings" : "title");
-  };
+  const back = () => go(game.player ? "settings" : "title");
 
   const save = async () => {
     if (!view) return;

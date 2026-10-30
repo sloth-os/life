@@ -90,6 +90,11 @@ export class Runtime {
   #services: Services;
   #fingerprints: Record<ServiceName, string>;
   #mapsTools: MapsAgentTools | undefined;
+  /**
+   * Opened once: where classes live is a start-up setting, so turning classes off and on again
+   * reuses the same store rather than opening a second one over the same file.
+   */
+  #classStore: Promise<ClassroomStore | undefined> | null = null;
   #applying: Promise<unknown> = Promise.resolve();
 
   private constructor(opts: RuntimeOptions, services: Services, mapsTools: MapsAgentTools | undefined) {
@@ -109,10 +114,13 @@ export class Runtime {
       engine: new GameEngine({ ai, grounding, log: opts.log }),
       voice: Runtime.#voice(config, opts),
       images: Runtime.#images(config, opts),
-      classroom: await Runtime.#classroom(config, opts),
-      revision: 1,
+      classroom: undefined,
+      // From the boot time, so a restarted server never repeats a revision a browser has seen.
+      revision: Date.now(),
     };
-    return new Runtime(opts, services, mapsTools);
+    const runtime = new Runtime(opts, services, mapsTools);
+    services.classroom = await runtime.#classroom(config);
+    return runtime;
   }
 
   static #maps(config: ServerConfig, opts: RuntimeOptions): MapsAgentTools | undefined {
@@ -131,14 +139,15 @@ export class Runtime {
   }
 
   /** Classroom mode needs somewhere to write; without it the game runs, just without classes. */
-  static async #classroom(config: ServerConfig, opts: RuntimeOptions): Promise<ClassroomStore | undefined> {
-    if (!config.classroom) return undefined;
-    try {
-      return opts.pool ? await ClassroomStore.openShared(opts.pool) : await ClassroomStore.open(config.dataDir);
-    } catch (error) {
-      opts.log(`[classroom] off: can't use ${opts.pool ? "the database" : config.dataDir} (${error instanceof Error ? error.message : String(error)})`);
+  #classroom(config: ServerConfig): Promise<ClassroomStore | undefined> {
+    if (!config.classroom) return Promise.resolve(undefined);
+    const { pool, log } = this.#opts;
+    this.#classStore ??= (pool ? ClassroomStore.openShared(pool) : ClassroomStore.open(config.dataDir)).catch((error: unknown) => {
+      log(`[classroom] off: can't use ${pool ? "the database" : config.dataDir} (${error instanceof Error ? error.message : String(error)})`);
+      this.#classStore = null;
       return undefined;
-    }
+    });
+    return this.#classStore;
   }
 
   get current(): Services {
@@ -200,9 +209,9 @@ export class Runtime {
     if (changed.includes("voice")) services.voice = Runtime.#voice(config, this.#opts);
     if (changed.includes("images")) services.images = Runtime.#images(config, this.#opts);
     if (changed.includes("classroom")) {
-      const previous = old.classroom;
-      if (previous) await previous.close();
-      services.classroom = await Runtime.#classroom(config, this.#opts);
+      // Turned off: write what's pending, but keep the store for when classes come back.
+      await old.classroom?.flush();
+      services.classroom = await this.#classroom(config);
     }
 
     this.#services = services;
@@ -214,6 +223,6 @@ export class Runtime {
   async close(): Promise<void> {
     await this.#applying;
     await this.#mapsTools?.close();
-    await this.#services.classroom?.close();
+    await (await this.#classStore)?.close();
   }
 }

@@ -52,9 +52,14 @@ export function useVoiceInput(context: string, onHeard: (transcript: string, fin
       const audio = await recording.stop();
       // The words go into the message box as they arrive, so the player can check them while the
       // model is still writing how they sounded.
-      const heard = await api.listen({ audio: audio.base64, context }, (words) => onHeard(words, false));
+      let streamed = false;
+      const heard = await api.listen({ audio: audio.base64, context }, (words) => {
+        streamed = true;
+        onHeard(words, false);
+      });
       if (!heard.transcript.trim()) {
-        onHeard("", true);
+        // Nothing heard: what the player had typed stays, unless words already replaced it.
+        if (streamed) onHeard("", true);
         toast("info", t("voice.didntCatch"), t("voice.closer"));
       } else {
         onHeard(heard.transcript, true);

@@ -1,6 +1,7 @@
 // Probe the configured AI services with tiny requests and report what each server accepts and how
 // fast it answers: the text model in each structured-output mode (with the thinking switch the game
-// sends), the voice model speaking and listening, and the image gateway. CI runs it before the
+// sends), the voice model speaking and listening, the image gateway, and the Maps agent tools
+// (search, weather, a walking route, with the shape of each answer). CI runs it before the
 // real-services suite, so a misconfigured service fails fast with the server's own answer.
 //   node scripts/probe-ai.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -10,6 +11,7 @@ import { loadEffectiveConfig } from "../server/settings/load.ts";
 import { thinkingFields } from "../server/ai/openai.ts";
 import { VoiceService, wavDurationMs, wordOverlap } from "../server/ai/voice.ts";
 import { ImageGateway } from "../server/images.ts";
+import { MapsAgentTools } from "../server/grounding/mapsAgentTools.ts";
 
 // What the game would run with: the environment, .env and anything saved on the settings page.
 const config = await loadEffectiveConfig();
@@ -134,9 +136,42 @@ async function probeImages(): Promise<void> {
   }
 }
 
+/** Maps Experience agent tools, live: the calls the Game Master's grounding makes. */
+async function probeMaps(): Promise<void> {
+  if (!config.googleMapsServerKey) {
+    console.log("maps: no GOOGLE_MAPS_SERVER_KEY (with GOOGLE_MAPS_API_KEY); grounding uses Wikipedia.");
+    return;
+  }
+  // The client logs each tool's result keys the first time, which is what the parser has to fit.
+  const tools = new MapsAgentTools({ apiKey: config.googleMapsServerKey, log: (m) => console.log(m), version: config.version });
+  const kyoto = { lat: 35.005, lng: 135.7649 };
+  try {
+    let started = Date.now();
+    const found = await tools.searchPlaces("food market near Nishiki Market, Kyoto", kyoto, 2000, "en");
+    const withLinks = found.places.filter((p) => p.mapsUrl).length;
+    console.log(`maps search_places: ${found.places.length} places (${withLinks} with Google Maps links), summary ${found.summary.length} chars, in ${Date.now() - started}ms`);
+    if (!found.places.length) failures++;
+    started = Date.now();
+    const weather = await tools.lookupWeather(kyoto);
+    console.log(`maps lookup_weather: ${JSON.stringify(weather.summary)} in ${Date.now() - started}ms`);
+    const to = found.places.find((p) => p.location)?.location;
+    if (to) {
+      started = Date.now();
+      const walk = await tools.walkingRoute(kyoto, to);
+      console.log(`maps compute_routes (walk): ${walk ? `${walk.minutes} min, ${walk.meters} m` : "no route"} in ${Date.now() - started}ms`);
+    }
+  } catch (error) {
+    console.log(`maps failed: ${describe(error)}`);
+    failures++;
+  } finally {
+    await tools.close();
+  }
+}
+
 await probeText();
 await probeVoice();
 await probeImages();
+await probeMaps();
 if (failures) {
   console.error(`probe: ${failures} service(s) failed.`);
   process.exit(1);

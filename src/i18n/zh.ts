@@ -653,6 +653,7 @@ export const zh: Translation = {
     "setting.WIKIPEDIA_LANG.help": "用哪种语言的维基百科介绍地点。",
     "error.adminKey": "这不是设置密钥。",
     "error.settingsConflict": "这期间有人修改了设置。设置已重新加载，请检查后再次保存。",
+    "error.adminLocked": "错误的密钥太多了。请等几分钟再试。",
     "error.settingsOff": "这台服务器关闭了设置页面。",
     "expedition.otherMap": "这次探险是在 Google 地图上规划的，但这台服务器已不再使用 Google 地图。开放地图无法显示其中的地点，请从世界地图开始新的探险。你学到的内容仍保存在日志中。",
   },

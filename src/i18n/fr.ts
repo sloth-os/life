@@ -653,6 +653,7 @@ export const fr: Translation = {
     "setting.WIKIPEDIA_LANG.help": "Quelle Wikipédia décrit les lieux.",
     "error.adminKey": "Ce n'est pas la clé des réglages.",
     "error.settingsConflict": "Quelqu'un d'autre a modifié les réglages entre-temps. Ils ont été rechargés : vérifiez-les et enregistrez à nouveau.",
+    "error.adminLocked": "Trop de clés erronées. Patientez quelques minutes et réessayez.",
     "error.settingsOff": "La page des réglages est désactivée sur ce serveur.",
     "expedition.otherMap": "Cette expédition a été préparée sur Google Maps, que ce serveur n'utilise plus. Ses lieux ne peuvent pas s'afficher sur la carte libre : lancez une nouvelle expédition depuis la carte du monde. Votre carnet garde ce que vous avez appris.",
   },

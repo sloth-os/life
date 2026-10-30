@@ -653,6 +653,7 @@ export const ja: Translation = {
     "setting.WIKIPEDIA_LANG.help": "どの言語のウィキペディアで場所を説明するか。",
     "error.adminKey": "設定キーが正しくありません。",
     "error.settingsConflict": "その間に、ほかの人が設定を変更しました。設定を読み込み直したので、確認してからもう一度保存してください。",
+    "error.adminLocked": "まちがったキーが多すぎます。数分待ってから、もう一度試してください。",
     "error.settingsOff": "このサーバーでは設定ページが無効になっています。",
     "expedition.otherMap": "この探訪は Google マップで計画されましたが、このサーバーはもう Google マップを使っていません。オープンマップにはその場所を表示できないので、世界地図から新しい探訪をはじめてください。学んだことはノートに残っています。",
   },

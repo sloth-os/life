@@ -15,7 +15,7 @@ import { SettingsService, warningsFor } from "../../server/settings/service.ts";
 import { FileSettingsStore } from "../../server/settings/store.ts";
 import { HttpError } from "../../server/util/errors.ts";
 import type { AppConfig } from "../../shared/schemas.ts";
-import type { SettingsView } from "../../shared/settings.ts";
+import { SETTINGS, type SettingsView } from "../../shared/settings.ts";
 import { fakeOpenDataFetch } from "./openDataFetch.ts";
 
 const cleanups: (() => unknown)[] = [];
@@ -56,6 +56,17 @@ describe("where settings come from", () => {
     expect(states.AI_MODEL).toMatchObject({ source: "page", value: "claude-page", envValue: "claude-env" });
     expect(states.RATE_LIMIT_PER_10MIN).toMatchObject({ source: "default", value: "120" });
     expect(states.ACCESS_CODE).toMatchObject({ source: "page", value: "maple" });
+  });
+
+  it("puts every variable the server reads on the settings page", async () => {
+    const source = await readFile("server/config.ts", "utf8");
+    const read = new Set<string>();
+    for (const call of source.matchAll(/value\(([^)]*)\)/g)) for (const name of call[1]!.matchAll(/"([A-Z][A-Z0-9_]+)"/g)) read.add(name[1]!);
+    for (const name of source.matchAll(/env\.([A-Z][A-Z0-9_]+)/g)) read.add(name[1]!);
+    const onPage = new Set(SETTINGS.flatMap((s) => [s.key, ...(s.aliases ?? [])]));
+    expect(read.size).toBeGreaterThan(25);
+    // NODE_ENV is how Node is run, not a setting of the game's.
+    expect([...read].filter((name) => !onPage.has(name) && name !== "NODE_ENV")).toEqual([]);
   });
 
   it("warns about settings that leave something off", () => {

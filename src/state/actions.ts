@@ -62,6 +62,7 @@ const ERROR_MESSAGES: Partial<Record<string, MessageKey>> = {
   assignment_gone: "error.assignmentGone",
   mentor_done: "error.mentorDone",
   admin_key: "error.adminKey",
+  admin_locked: "error.adminLocked",
   settings_conflict: "error.settingsConflict",
   settings_off: "error.settingsOff",
   internal: "error.internal",
@@ -79,6 +80,8 @@ export function message(error: unknown): string {
 const isAbort = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
 
 export function go(screen: Screen): void {
+  // /#settings opens the server's settings; leaving them drops it, so a reload doesn't go back.
+  if (screen !== "server" && window.location.hash === "#settings") history.replaceState(null, "", window.location.pathname + window.location.search);
   store.ui({ screen });
   window.scrollTo?.({ top: 0 });
 }

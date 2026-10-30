@@ -650,6 +650,7 @@ export const en = {
   "setting.WIKIPEDIA_LANG.help": "Which Wikipedia describes the places.",
   "error.adminKey": "That isn't the settings key.",
   "error.settingsConflict": "Someone else changed the settings in the meantime. They've been reloaded: check them and save again.",
+  "error.adminLocked": "Too many wrong keys. Wait a few minutes and try again.",
   "error.settingsOff": "The settings page is turned off on this server.",
   "expedition.otherMap": "This expedition was planned on Google Maps, which this server no longer uses. Its places can't be shown on the open map, so start a new expedition from the world map. Your journal keeps what you learned.",
 } as const;

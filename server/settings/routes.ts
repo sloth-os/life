@@ -44,7 +44,7 @@ export function adminRoutes(service: SettingsService | undefined): express.Route
   const wrongKeys = new RateLimiter(20, 15 * 60 * 1000);
   const requireKey = (req: Request, _res: Response, next: NextFunction) => {
     const ip = req.ip ?? "unknown";
-    if (wrongKeys.blocked(ip)) throw new HttpError(429, "rate_limited", "Too many wrong keys. Wait a few minutes and try again.");
+    if (wrongKeys.blocked(ip)) throw new HttpError(429, "admin_locked", "Too many wrong keys. Wait a few minutes and try again.");
     if (!service.verify(req.get("x-admin-key") ?? undefined)) {
       wrongKeys.allow(ip);
       throw new HttpError(401, "admin_key", "That isn't the settings key.");
