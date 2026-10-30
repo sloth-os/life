@@ -4,7 +4,6 @@
 // with; the next request gets the new ones. No restart, and nothing in progress is cut off.
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
-import type pg from "pg";
 import type { RuntimeStatus, ServiceName } from "../shared/settings.ts";
 import { ClaudeGameAI } from "./ai/claude.ts";
 import { DemoGameAI } from "./ai/demo.ts";
@@ -13,6 +12,7 @@ import type { GameAI } from "./ai/types.ts";
 import { VoiceService } from "./ai/voice.ts";
 import { ClassroomStore } from "./classroom/store.ts";
 import type { ServerConfig } from "./config.ts";
+import type { Database } from "./db.ts";
 import { GameEngine } from "./game/engine.ts";
 import { GroundingService } from "./grounding/index.ts";
 import { MapsAgentTools } from "./grounding/mapsAgentTools.ts";
@@ -35,8 +35,8 @@ export interface Services {
 
 export interface RuntimeOptions {
   log: (message: string) => void;
-  /** Postgres, when DATABASE_URL is set: classes are kept there instead of under DATA_DIR. */
-  pool?: pg.Pool;
+  /** The database DATABASE_URL names (Postgres or SQLite): classes are kept there instead of under DATA_DIR. */
+  db?: Database;
   /** Tests: a different AI, or a fake network for grounding. */
   createAI?: (config: ServerConfig) => GameAI;
   fetchImpl?: FetchLike;
@@ -141,9 +141,9 @@ export class Runtime {
   /** Classroom mode needs somewhere to write; without it the game runs, just without classes. */
   #classroom(config: ServerConfig): Promise<ClassroomStore | undefined> {
     if (!config.classroom) return Promise.resolve(undefined);
-    const { pool, log } = this.#opts;
-    this.#classStore ??= (pool ? ClassroomStore.openShared(pool) : ClassroomStore.open(config.dataDir)).catch((error: unknown) => {
-      log(`[classroom] off: can't use ${pool ? "the database" : config.dataDir} (${error instanceof Error ? error.message : String(error)})`);
+    const { db, log } = this.#opts;
+    this.#classStore ??= (db ? ClassroomStore.openShared(db) : ClassroomStore.open(config.dataDir)).catch((error: unknown) => {
+      log(`[classroom] off: can't use ${db ? "the database" : config.dataDir} (${error instanceof Error ? error.message : String(error)})`);
       this.#classStore = null;
       return undefined;
     });

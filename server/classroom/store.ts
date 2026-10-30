@@ -1,16 +1,20 @@
 // Classroom mode: classes, their assignments and students' results. One server instance keeps
 // them in a JSON file under DATA_DIR: the whole store lives in memory and is written atomically
-// (temp file, then rename) shortly after each change. Several instances share Postgres
-// (DATABASE_URL) instead, where each change locks its class's row, so instances can't overwrite
-// each other. A teacher's key is shown once and kept only as a hash; students get an unguessable
-// id. Results are summaries (scores, the mentor's headline): conversations never leave the
-// student's browser.
+// (temp file, then rename) shortly after each change. With DATABASE_URL they live in a database
+// instead: Postgres, shared by several instances, where each change locks its class's row, or a
+// SQLite file, where each change runs in a write transaction. Either way, instances can't
+// overwrite each other. A teacher's key is shown once and kept only as a hash; students get an
+// unguessable id. Results are summaries (scores, the mentor's headline): conversations never
+// leave the student's browser.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import type pg from "pg";
+import type { StoreKind } from "../../shared/settings.ts";
 import { SKILL_IDS, type SkillId } from "../../shared/skills.ts";
 import type { Assignment, AssignmentInput, ClassDashboard, ClassResult, ClassResultInput, StudentClassView } from "../../shared/classroom.ts";
+import type { Database } from "../db.ts";
 import { HttpError } from "../util/errors.ts";
 
 interface Student {
@@ -37,7 +41,7 @@ export interface ClassRecord {
 
 /** Where classes are kept. `update` changes one class atomically and returns what `change` does. */
 export interface ClassBackend {
-  readonly kind: "file" | "postgres";
+  readonly kind: StoreKind;
   count(): Promise<number>;
   get(code: string): Promise<ClassRecord | undefined>;
   /** False when the code is taken. */
@@ -204,6 +208,68 @@ export class PostgresClassBackend implements ClassBackend {
   async close(): Promise<void> {}
 }
 
+/** One row per class in a SQLite file; each change holds the write lock from read to write. */
+export class SqliteClassBackend implements ClassBackend {
+  readonly kind = "sqlite" as const;
+  readonly #db: DatabaseSync;
+  readonly #count: StatementSync;
+  readonly #get: StatementSync;
+  readonly #insert: StatementSync;
+  readonly #update: StatementSync;
+
+  private constructor(db: DatabaseSync) {
+    this.#db = db;
+    this.#count = db.prepare("SELECT count(*) AS n FROM common_ground_classes");
+    this.#get = db.prepare("SELECT data FROM common_ground_classes WHERE code = ?");
+    this.#insert = db.prepare("INSERT INTO common_ground_classes (code, data, updated_at) VALUES (?, ?, ?) ON CONFLICT (code) DO NOTHING");
+    this.#update = db.prepare("UPDATE common_ground_classes SET data = ?, updated_at = ? WHERE code = ?");
+  }
+
+  static async open(db: DatabaseSync): Promise<SqliteClassBackend> {
+    db.exec(`CREATE TABLE IF NOT EXISTS common_ground_classes (
+      code TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`);
+    return new SqliteClassBackend(db);
+  }
+
+  async count(): Promise<number> {
+    return Number((this.#count.get() as { n: number }).n);
+  }
+
+  async get(code: string): Promise<ClassRecord | undefined> {
+    const row = this.#get.get(code) as { data: string } | undefined;
+    return row ? (JSON.parse(row.data) as ClassRecord) : undefined;
+  }
+
+  async insert(record: ClassRecord): Promise<boolean> {
+    return Number(this.#insert.run(record.code, JSON.stringify(record), Date.now()).changes) > 0;
+  }
+
+  async update<T>(code: string, change: (record: ClassRecord) => T): Promise<T> {
+    // IMMEDIATE takes the write lock before reading, so no other process changes the class in
+    // between. Nothing here awaits, so this process can't interleave either.
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.#get.get(code) as { data: string } | undefined;
+      if (!row) throw notFound();
+      const record = JSON.parse(row.data) as ClassRecord;
+      const result = change(record);
+      this.#update.run(JSON.stringify(record), Date.now(), code);
+      this.#db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (this.#db.isTransaction) this.#db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async flush(): Promise<void> {}
+
+  async close(): Promise<void> {}
+}
+
 export class ClassroomStore {
   readonly #backend: ClassBackend;
 
@@ -216,9 +282,9 @@ export class ClassroomStore {
     return new ClassroomStore(await FileClassBackend.open(dir));
   }
 
-  /** Classes in Postgres, shared by every instance using the same database. */
-  static async openShared(pool: pg.Pool): Promise<ClassroomStore> {
-    return new ClassroomStore(await PostgresClassBackend.open(pool));
+  /** Classes in the database DATABASE_URL names, shared by every instance using it. */
+  static async openShared(db: Database): Promise<ClassroomStore> {
+    return new ClassroomStore(await (db.kind === "postgres" ? PostgresClassBackend.open(db.pool) : SqliteClassBackend.open(db.sqlite)));
   }
 
   get kind(): ClassBackend["kind"] {

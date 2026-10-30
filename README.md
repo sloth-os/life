@@ -83,7 +83,7 @@ A value set on the page overrides the environment's until you reset it there. Th
 |---|---|
 | `PORT` | Where the server listens (default `8787`) |
 | `DATA_DIR` | Where the settings page's values (`settings.json`, readable only by the server) and classes (`classrooms.json`) are kept (default `data`, `/app/data` in Docker) |
-| `DATABASE_URL` | Postgres for settings and classes instead, so **several instances** can serve one game: a class changed through one instance is seen by all, and settings saved on one apply on every instance without a restart (`LISTEN`/`NOTIFY`) |
+| `DATABASE_URL` | A database for settings and classes instead of files. **Postgres** (`postgres://…`) lets **several instances** serve one game: a class changed through one instance is seen by all, and settings saved on one apply on every instance without a restart (`LISTEN`/`NOTIFY`). **SQLite** (`sqlite:data/common-ground.db`, or `sqlite:///abs/path.db`) keeps everything in one file, made readable only by the server; processes sharing that file on one machine see each other's changes too. SQLite is built into Node, which notes once at start that it's still experimental. |
 | `ADMIN_KEY` | The settings page's key. Without it the server makes one at first start, prints it once and keeps only its hash. |
 | `SETTINGS_PAGE` | `off` turns the page off and locks the configuration to the environment (values saved earlier are then ignored) |
 
@@ -99,7 +99,7 @@ docker run -p 8787:8787 \
   ghcr.io/sloth-os/life:latest
 ```
 
-It takes the same environment variables as above (or `--env-file .env`), or none at all: open `/#settings` with the key from the container's log (`docker logs <container>`) and configure it there. Add `-v common-ground-data:/app/data` to keep settings and classes across restarts; `docker exec <container> node scripts/settings-key.ts` makes a new settings key. To run several containers behind a load balancer, give them all the same `DATABASE_URL` (Postgres) and `ADMIN_KEY`. For an OpenAI-compatible model, pass `AI_PROVIDER=openai`, `AI_MODEL`, `AI_BASE_URL` and `AI_API_KEY` instead of `ANTHROPIC_API_KEY`. Tags are `latest` and the commit SHA. To build it yourself: `docker build -t common-ground .`
+It takes the same environment variables as above (or `--env-file .env`), or none at all: open `/#settings` with the key from the container's log (`docker logs <container>`) and configure it there. Add `-v common-ground-data:/app/data` to keep settings and classes across restarts (with `-e DATABASE_URL=sqlite:/app/data/common-ground.db` they're kept in one SQLite file there); `docker exec <container> node scripts/settings-key.ts` makes a new settings key. To run several containers behind a load balancer, give them all the same `DATABASE_URL` (Postgres) and `ADMIN_KEY`. For an OpenAI-compatible model, pass `AI_PROVIDER=openai`, `AI_MODEL`, `AI_BASE_URL` and `AI_API_KEY` instead of `ANTHROPIC_API_KEY`. Tags are `latest` and the commit SHA. To build it yourself: `docker build -t common-ground .`
 
 ### Modes
 
@@ -192,8 +192,8 @@ The tests run without network or keys:
 - **Maps agent tools**: our MCP client against a local MCP server with the same tool names and argument shapes.
 - **API**: the full HTTP flow through the real engine with Demo AI, including SSE streaming (progress, the early briefing), access codes, rate limiting, voice routes and postcards.
 - **Voice and images**: the voice service against a fake omni server (audio out and in, a model that can't speak, data-URI and plain base64 input), and the image gateway client (task polling, inline and remote images, refused outputs).
-- **Mediation and classroom**: the engine's mediation rules and a scripted mediation; the class store (results, the class debrief, teacher-only access, persistence), and with `TEST_DATABASE_URL` the shared Postgres store: two instances, thirty students joining at once, nothing lost.
-- **Settings and hot reload**: where each value comes from, validation, saving and applying only what changed, edits to `settings.json` applying on their own, settings saved on one instance applying on another, the settings key (made once, checked, replaced, locked out after 20 wrong tries), and that no secret ever comes back.
+- **Mediation and classroom**: the engine's mediation rules and a scripted mediation; the class store (results, the class debrief, teacher-only access, persistence); the SQLite store (two connections and two processes joining students to one class at once, nothing lost; a new file readable only by the server); and with `TEST_DATABASE_URL` the shared Postgres store: two instances, thirty students joining at once, nothing lost.
+- **Settings and hot reload**: where each value comes from, validation, saving and applying only what changed, edits to `settings.json` applying on their own, settings saved on one instance (Postgres) or process (SQLite) applying on another, the key script's new key reaching a running server, the settings key (made once, checked, replaced, locked out after 20 wrong tries), and that no secret ever comes back.
 - **Bounded outputs**: the cap each task sends, `max_completion_tokens` for servers that want it, a brief retry after a cut-off, and the guard that stops a server ignoring the cap.
 - **Evaluation**: the harness itself, end to end with Demo AI.
 - **Localization**: placeholders match across all six languages, vocabulary is translated, and prompts carry the player's language.

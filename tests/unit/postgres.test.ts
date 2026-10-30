@@ -7,9 +7,10 @@ import pg from "pg";
 import { DemoGameAI } from "../../server/ai/demo.ts";
 import { ClassroomStore } from "../../server/classroom/store.ts";
 import { loadConfig } from "../../server/config.ts";
+import { openDatabase, type Database } from "../../server/db.ts";
 import { Runtime } from "../../server/runtime.ts";
 import { SettingsService } from "../../server/settings/service.ts";
-import { PostgresSettingsStore } from "../../server/settings/store.ts";
+import { openSettingsStore } from "../../server/settings/store.ts";
 import type { AssignmentInput } from "../../shared/classroom.ts";
 import { fakeOpenDataFetch } from "./openDataFetch.ts";
 
@@ -23,11 +24,11 @@ const assignment: AssignmentInput = {
 describe.skipIf(!adminUrl)("the shared Postgres store", () => {
   const name = `life_test_${randomBytes(4).toString("hex")}`;
   let url = "";
-  const pools: pg.Pool[] = [];
-  const pool = () => {
-    const p = new pg.Pool({ connectionString: url, max: 5 });
-    pools.push(p);
-    return p;
+  const dbs: Database[] = [];
+  const database = async () => {
+    const db = await openDatabase(url, { connections: 5, log: () => {} });
+    dbs.push(db);
+    return db;
   };
 
   beforeAll(async () => {
@@ -41,7 +42,7 @@ describe.skipIf(!adminUrl)("the shared Postgres store", () => {
   });
 
   afterAll(async () => {
-    await Promise.all(pools.map((p) => p.end()));
+    await Promise.all(dbs.map((db) => db.close()));
     const admin = new pg.Client({ connectionString: adminUrl });
     await admin.connect();
     await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
@@ -49,8 +50,8 @@ describe.skipIf(!adminUrl)("the shared Postgres store", () => {
   });
 
   it("runs a class across two instances without losing anyone's changes", async () => {
-    const one = await ClassroomStore.openShared(pool());
-    const two = await ClassroomStore.openShared(pool());
+    const one = await ClassroomStore.openShared(await database());
+    const two = await ClassroomStore.openShared(await database());
     expect(one.kind).toBe("postgres");
     const { code, teacherKey } = await one.create("7C", "Mr Sato");
     const a = await two.addAssignment(code, teacherKey, assignment);
@@ -86,8 +87,10 @@ describe.skipIf(!adminUrl)("the shared Postgres store", () => {
   it("applies settings saved on one instance on the other, without a restart", async () => {
     const env = { ADMIN_KEY: "" };
     const start = async () => {
-      const store = await PostgresSettingsStore.open(pool());
-      const runtime = await Runtime.start(loadConfig({}, []), { log: () => {}, createAI: () => new DemoGameAI({ typingDelayMs: 0 }), fetchImpl: fakeOpenDataFetch(), pool: pool() });
+      const db = await database();
+      const store = await openSettingsStore(db, "unused");
+      expect(store.kind).toBe("postgres");
+      const runtime = await Runtime.start(loadConfig({}, []), { log: () => {}, createAI: () => new DemoGameAI({ typingDelayMs: 0 }), fetchImpl: fakeOpenDataFetch(), db });
       const settings = new SettingsService({ store, runtime, processEnv: env, log: () => {} });
       settings.watch();
       return { store, runtime, settings };

@@ -198,13 +198,16 @@ export interface SettingState {
 
 export type ServiceName = "ai" | "voice" | "images" | "maps" | "grounding" | "classroom" | "access";
 
+/** Where settings and classes are kept: files under DATA_DIR, or the database DATABASE_URL names. */
+export type StoreKind = "file" | "postgres" | "sqlite";
+
 /** What the server is running right now. */
 export interface RuntimeStatus {
   ai: { mode: "claude" | "openai" | "demo"; model?: string; endpoint?: string };
   voice: { listen?: string; speak: "model" | "tts" | "browser"; tts?: string };
   postcards: { on: boolean; model?: string };
   maps: { mode: "google" | "open"; grounding: "google" | "wikipedia"; walkingRoutes: boolean };
-  classroom: { on: boolean; store?: "file" | "postgres" };
+  classroom: { on: boolean; store?: StoreKind };
   accessCode: boolean;
 }
 
@@ -214,7 +217,7 @@ export interface SettingsView {
   settings: Record<string, SettingState>;
   status: RuntimeStatus;
   /** Where the page's values are kept. */
-  storage: "file" | "postgres";
+  storage: StoreKind;
   /** Also applied without a restart: edits to .env (when the server has one). */
   watchesDotEnv: boolean;
   /** Problems worth fixing that don't stop the server (a key without a provider…). */

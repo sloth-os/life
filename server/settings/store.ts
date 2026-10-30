@@ -1,12 +1,16 @@
 // Where values saved on the settings page are kept: a JSON file under DATA_DIR (one instance), or
-// Postgres (DATABASE_URL), which several instances share. Both tell the server when the settings
-// change behind its back, so it applies them without a restart: an edit to the file, or another
-// instance saving (Postgres LISTEN/NOTIFY).
+// the database DATABASE_URL names: Postgres, which several instances share, or a SQLite file. Each
+// tells the server when the settings change behind its back, so it applies them without a restart:
+// an edit to the file, another instance saving (Postgres LISTEN/NOTIFY), or another process writing
+// to the SQLite file.
 import { createHash } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import type pg from "pg";
+import type { StoreKind } from "../../shared/settings.ts";
+import type { Database } from "../db.ts";
 import { HttpError } from "../util/errors.ts";
 
 export interface StoredSettings {
@@ -18,18 +22,25 @@ export interface StoredSettings {
 }
 
 export interface SettingsStore {
-  readonly kind: "file" | "postgres";
+  readonly kind: StoreKind;
   current(): StoredSettings;
   /** Save new values. With `revision`, refuse (409) if someone else saved since. */
   save(values: Record<string, string>, revision?: number): Promise<StoredSettings>;
   /** Keep a generated key's hash; with `onlyIfMissing`, false if another instance got there first. */
   setAdminKeyHash(hash: string, onlyIfMissing: boolean): Promise<boolean>;
-  /** Called when the settings change elsewhere: the file edited, or another instance saving. */
+  /** Called when the settings change elsewhere: the file edited, or another instance or process saving. */
   onExternalChange(listener: (settings: StoredSettings) => void): void;
   close(): Promise<void>;
 }
 
 const EMPTY: StoredSettings = { revision: 0, updatedAt: null, values: {} };
+
+/** The store DATABASE_URL names, or settings.json under DATA_DIR without one. */
+export function openSettingsStore(db: Database | undefined, dataDir: string, log: (message: string) => void = () => {}): Promise<SettingsStore> {
+  if (db?.kind === "postgres") return PostgresSettingsStore.open(db.pool, log);
+  if (db?.kind === "sqlite") return SqliteSettingsStore.open(db.sqlite, log);
+  return FileSettingsStore.open(dataDir, log);
+}
 
 function normalize(raw: unknown): StoredSettings {
   const data = (typeof raw === "object" && raw !== null ? raw : {}) as Partial<StoredSettings>;
@@ -275,5 +286,118 @@ export class PostgresSettingsStore implements SettingsStore {
       await client.query(`UNLISTEN ${CHANNEL}`).catch(() => {});
       client.release();
     }
+  }
+}
+
+interface SqliteSettingsRow {
+  revision: number;
+  updated_at: number | null;
+  setting_values: string;
+  admin_key_hash: string | null;
+}
+
+/**
+ * One row in a SQLite file. SQLite can't announce changes, so other processes' saves (another
+ * instance on this machine, the key script) are found by checking the file's data version, which
+ * moves only when another connection commits.
+ */
+export class SqliteSettingsStore implements SettingsStore {
+  readonly kind = "sqlite" as const;
+  readonly #log: (message: string) => void;
+  readonly #pollMs: number;
+  readonly #read: StatementSync;
+  readonly #save: StatementSync;
+  readonly #setKey: StatementSync;
+  readonly #dataVersion: StatementSync;
+  #settings: StoredSettings = EMPTY;
+  /** The values as last read, to tell an outside edit that kept the revision. */
+  #valuesText = "{}";
+  #version: unknown = null;
+  #timer: ReturnType<typeof setInterval> | null = null;
+  readonly #listeners: ((settings: StoredSettings) => void)[] = [];
+
+  private constructor(db: DatabaseSync, log: (message: string) => void, pollMs: number) {
+    this.#log = log;
+    this.#pollMs = pollMs;
+    this.#read = db.prepare("SELECT revision, updated_at, setting_values, admin_key_hash FROM common_ground_settings WHERE id = 1");
+    this.#save = db.prepare(
+      `UPDATE common_ground_settings SET setting_values = ?1, revision = revision + 1, updated_at = ?2
+       WHERE id = 1 AND (?3 IS NULL OR revision = ?3) RETURNING revision, updated_at`,
+    );
+    this.#setKey = db.prepare("UPDATE common_ground_settings SET admin_key_hash = ?1 WHERE id = 1 AND (?2 = 0 OR admin_key_hash IS NULL)");
+    this.#dataVersion = db.prepare("PRAGMA data_version");
+  }
+
+  /** `pollMs`: how often to look for other processes' changes once something listens. */
+  static async open(db: DatabaseSync, log: (message: string) => void = () => {}, pollMs = 1_000): Promise<SqliteSettingsStore> {
+    db.exec(`CREATE TABLE IF NOT EXISTS common_ground_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      revision INTEGER NOT NULL,
+      updated_at INTEGER,
+      setting_values TEXT NOT NULL,
+      admin_key_hash TEXT
+    )`);
+    db.exec("INSERT INTO common_ground_settings (id, revision, setting_values) VALUES (1, 0, '{}') ON CONFLICT (id) DO NOTHING");
+    const store = new SqliteSettingsStore(db, log, pollMs);
+    store.#reload();
+    return store;
+  }
+
+  /** Read the row; true if it differs from what we had. */
+  #reload(): boolean {
+    this.#version = this.#dataVersion.get()?.data_version;
+    const row = this.#read.get() as SqliteSettingsRow | undefined;
+    if (!row) return false;
+    let values: unknown = {};
+    try {
+      values = JSON.parse(row.setting_values);
+    } catch {
+      this.#log("[settings] the values saved in SQLite aren't valid JSON; ignoring them");
+    }
+    const next = normalize({ values, revision: row.revision, updatedAt: row.updated_at, adminKeyHash: row.admin_key_hash ?? undefined });
+    const changed = next.revision !== this.#settings.revision || next.adminKeyHash !== this.#settings.adminKeyHash || row.setting_values !== this.#valuesText;
+    this.#settings = next;
+    this.#valuesText = row.setting_values;
+    return changed;
+  }
+
+  current(): StoredSettings {
+    return this.#settings;
+  }
+
+  async save(values: Record<string, string>, revision?: number): Promise<StoredSettings> {
+    const text = JSON.stringify(values);
+    const row = this.#save.get(text, Date.now(), revision ?? null) as { revision: number; updated_at: number } | undefined;
+    if (!row) throw conflict();
+    this.#settings = { ...this.#settings, values, revision: row.revision, updatedAt: row.updated_at };
+    this.#valuesText = text;
+    return this.#settings;
+  }
+
+  async setAdminKeyHash(hash: string, onlyIfMissing: boolean): Promise<boolean> {
+    const { changes } = this.#setKey.run(hash, onlyIfMissing ? 1 : 0);
+    this.#reload();
+    return Number(changes) > 0;
+  }
+
+  onExternalChange(listener: (settings: StoredSettings) => void): void {
+    this.#listeners.push(listener);
+    if (this.#timer) return;
+    this.#timer = setInterval(() => this.#poll(), this.#pollMs);
+    this.#timer.unref();
+  }
+
+  #poll(): void {
+    try {
+      if (this.#dataVersion.get()?.data_version === this.#version) return;
+      if (this.#reload()) for (const listener of this.#listeners) listener(this.#settings);
+    } catch (error) {
+      this.#log(`[settings] can't read the settings from SQLite (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.#timer) clearInterval(this.#timer);
+    this.#timer = null;
   }
 }

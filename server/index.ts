@@ -1,13 +1,13 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import pg from "pg";
 import { createApp } from "./app.ts";
 import { loadConfig, type ServerConfig } from "./config.ts";
+import { openDatabase, type Database } from "./db.ts";
 import { Runtime } from "./runtime.ts";
 import { layerEnv, readDotEnv } from "./settings/env.ts";
 import { SettingsService } from "./settings/service.ts";
-import { FileSettingsStore, PostgresSettingsStore, type SettingsStore } from "./settings/store.ts";
+import { openSettingsStore, type SettingsStore } from "./settings/store.ts";
 
 const log = (message: string) => console.log(message);
 // The environment as the server got it; .env and the settings page are layered over it, so a change
@@ -31,11 +31,16 @@ function configFrom(env: Record<string, string | undefined>, what: string): Serv
 
 // Where to listen, where to keep data and the settings key are read once, from the environment and .env.
 const boot = configFrom(layerEnv(processEnv, readDotEnv(DOT_ENV), {}), "the environment's AI settings");
-const pool = boot.databaseUrl ? new pg.Pool({ connectionString: boot.databaseUrl, max: 10 }) : undefined;
-pool?.on("error", (error) => log(`[db] ${error.message}`));
+let db: Database | undefined;
+try {
+  db = boot.databaseUrl ? await openDatabase(boot.databaseUrl, { connections: 10, log }) : undefined;
+} catch (error) {
+  console.error(`\n  Common Ground can't use its database: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+}
 
-const store: SettingsStore | undefined = await (pool ? PostgresSettingsStore.open(pool, log) : FileSettingsStore.open(boot.dataDir, log)).catch((error: unknown) => {
-  log(`[settings] can't keep settings in ${pool ? "the database" : boot.dataDir} (${error instanceof Error ? error.message : String(error)}); the settings page is off`);
+const store: SettingsStore | undefined = await openSettingsStore(db, boot.dataDir, log).catch((error: unknown) => {
+  log(`[settings] can't keep settings in ${db ? "the database" : boot.dataDir} (${error instanceof Error ? error.message : String(error)}); the settings page is off`);
   return undefined;
 });
 // With the page off, the server runs on its environment alone, even if values were saved earlier.
@@ -44,7 +49,7 @@ if (!boot.settingsPage && Object.keys(store?.current().values ?? {}).length) log
 
 const initial = Object.keys(pageValues()).length ? configFrom(layerEnv(processEnv, readDotEnv(DOT_ENV), pageValues()), "the saved AI settings") : boot;
 
-const runtime = await Runtime.start(initial, { log, pool });
+const runtime = await Runtime.start(initial, { log, db });
 const settings = store ? new SettingsService({ store, runtime, processEnv, dotEnvPath: DOT_ENV, usePage: boot.settingsPage, log }) : undefined;
 settings?.watch();
 const newKey = boot.settingsPage ? await settings?.ensureKey() : null;
@@ -85,7 +90,7 @@ const server = app.listen(boot.port, (error?: Error) => {
     }`,
     `     Voice: ${config.voice ? [config.voice.model && `hears with ${config.voice.model}`, config.voice.ttsModel ? `speaks with ${config.voice.ttsModel}` : `voices ${config.voice.voices.join(", ")}`].filter(Boolean).join("; ") : "browser speech where available — set VOICE_MODEL for an omni voice model"}`,
     `     Postcards: ${config.images ? `${config.images.model ?? "auto"} through mm-gateway` : "off — set MM_GATEWAY_URL and MM_GATEWAY_API_KEY"}`,
-    `     Classroom: ${status.classroom.on ? `on (${status.classroom.store === "postgres" ? "Postgres, shared" : `data in ${config.dataDir}`})` : "off"}`,
+    `     Classroom: ${status.classroom.on ? `on (${status.classroom.store === "postgres" ? "Postgres, shared" : status.classroom.store === "sqlite" && db?.kind === "sqlite" ? `SQLite, ${db.file}` : `data in ${config.dataDir}`})` : "off"}`,
     `     Maps: ${status.maps.mode === "google" ? "Google Maps" : "Open map mode — set GOOGLE_MAPS_API_KEY for Google Maps"}`,
     `     Place grounding: ${status.maps.grounding === "google" ? "Maps Experience agent tools + Wikipedia" : "Wikipedia"}${config.mapsMode === "google" && !runtime.mapsTools ? " (set GOOGLE_MAPS_SERVER_KEY to enable Maps agent tools)" : ""}`,
     config.accessCode ? "     Access code: required" : "",
@@ -103,7 +108,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     server.close();
     settings?.close();
     void Promise.allSettled([runtime.close(), store?.close()])
-      .then(() => pool?.end())
+      .then(() => db?.close())
       .finally(() => process.exit(0));
   });
 }

@@ -15,6 +15,7 @@ import {
   type SettingProblem,
   type SettingState,
   type SettingsView,
+  type StoreKind,
 } from "../../shared/settings.ts";
 import { Logo, Spinner } from "../components/ui.tsx";
 import { admin, rememberKey, savedKey } from "../lib/admin.ts";
@@ -27,6 +28,8 @@ import { plural, t, type MessageKey } from "../i18n/index.ts";
 type Draft = Record<string, string | null>;
 
 const PROBES: Partial<Record<SettingGroup, ProbeTarget>> = { ai: "ai", voice: "voice", postcards: "images", maps: "maps" };
+const STORE_LABEL: Record<StoreKind, MessageKey> = { file: "server.storeFile", postgres: "server.storePostgres", sqlite: "server.storeSqlite" };
+const STORAGE_NOTE: Record<StoreKind, MessageKey> = { file: "server.storageFile", postgres: "server.storagePostgres", sqlite: "server.storageSqlite" };
 
 const label = (key: string) => t(`setting.${key}` as MessageKey);
 const help = (key: string) => t(`setting.${key}.help` as MessageKey);
@@ -259,7 +262,7 @@ function StatusCard({ view }: { view: SettingsView }) {
     [t("server.statusVoice"), status.voice.listen || status.voice.speak !== "browser" ? voice : t("server.voiceOff")],
     [t("server.statusPostcards"), status.postcards.on ? `${t("server.on")}${status.postcards.model ? ` · ${status.postcards.model}` : ""}` : t("server.off.short")],
     [t("server.statusMaps"), maps],
-    [t("server.statusClassroom"), status.classroom.on ? `${t("server.on")} · ${status.classroom.store === "postgres" ? t("server.storePostgres") : t("server.storeFile")}` : t("server.off.short")],
+    [t("server.statusClassroom"), status.classroom.on ? `${t("server.on")} · ${t(STORE_LABEL[status.classroom.store ?? "file"])}` : t("server.off.short")],
     [t("server.statusAccess"), status.accessCode ? t("server.required") : t("server.none")],
   ];
   return (
@@ -274,7 +277,7 @@ function StatusCard({ view }: { view: SettingsView }) {
         ))}
       </dl>
       <p className="muted small">
-        {view.storage === "postgres" ? t("server.storagePostgres") : t("server.storageFile")} {view.watchesDotEnv ? t("server.dotEnv") : ""}
+        {t(STORAGE_NOTE[view.storage])} {view.watchesDotEnv ? t("server.dotEnv") : ""}
       </p>
     </section>
   );

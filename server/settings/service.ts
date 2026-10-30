@@ -142,9 +142,10 @@ export class SettingsService {
     if (applied.length) this.#opts.log(`[settings] ${reason}: applied without a restart (${applied.join(", ")})`);
   }
 
-  /** Follow edits to settings.json (or other instances' saves) and to .env. */
+  /** Follow edits to settings.json (or other instances' and processes' saves) and to .env. */
   watch(): void {
-    this.#opts.store.onExternalChange(() => void this.reload(this.#opts.store.kind === "file" ? "settings.json changed" : "another instance saved settings"));
+    const reason = { file: "settings.json changed", postgres: "another instance saved settings", sqlite: "another process saved settings" }[this.#opts.store.kind];
+    this.#opts.store.onExternalChange(() => void this.reload(reason));
     const path = this.#opts.dotEnvPath;
     if (!path) return;
     const file = resolve(path);
