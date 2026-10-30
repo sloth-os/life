@@ -3,7 +3,7 @@
 import OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { OpenAIGameAI, coerceToSchema, extractJson, strictJsonSchema } from "../../server/ai/openai.ts";
-import { NpcTurnDraftSchema, type NpcTurnDraft } from "../../server/ai/schemas.ts";
+import { NpcTurnDraftSchema, PersonaDraftSchema, type NpcTurnDraft } from "../../server/ai/schemas.ts";
 import { resolveAi } from "../../server/config.ts";
 import { HttpError } from "../../server/util/errors.ts";
 import { context, npc, player, turnRequest } from "./fixtures.ts";
@@ -204,6 +204,21 @@ describe("structured-output helpers", () => {
       phrase: { text: "Jambo", meaning: "" },
       conversation_state: "ongoing",
     });
+  });
+
+  it("recovers lists sent in another shape, and says what didn't fit", () => {
+    const insight = { lens: "culture", title: "Pickles", fact: "Nishiki has sold pickles for centuries [W1].", source_ids: ["W1"], quiz: { question: "?", options: ["a", "b", "c", "d"], answer_index: 0 } };
+    const notes: string[] = [];
+    const asString = coerceToSchema(PersonaDraftSchema, { pronouns: "she/her", insights: JSON.stringify([insight, insight]), insight_list: [] }, notes) as { insights: unknown[] };
+    expect(asString.insights).toHaveLength(2);
+    expect(notes).toContain("insights came as a string, read as 2 item(s)");
+    expect(notes.some((n) => n.startsWith("missing personality,"))).toBe(true);
+    expect(notes).toContain("unexpected insight_list");
+    const keyed = coerceToSchema(PersonaDraftSchema, { insights: { first: insight, second: insight, third: insight } }) as { insights: { fact: string }[] };
+    expect(keyed.insights.map((i) => i.fact)).toEqual([insight.fact, insight.fact, insight.fact]);
+    const alone = coerceToSchema(PersonaDraftSchema, { insights: insight }) as { insights: { title: string }[] };
+    expect(alone.insights).toMatchObject([{ title: "Pickles" }]);
+    expect((coerceToSchema(PersonaDraftSchema, { insights: "none" }) as { insights: unknown[] }).insights).toEqual([]);
   });
 
   it("extracts JSON from prose and fences", () => {

@@ -84,35 +84,66 @@ export function strictJsonSchema(schema: z.ZodType): Json {
 type Def = { type: string; shape?: Record<string, z.ZodType>; element?: z.ZodType; innerType?: z.ZodType; entries?: Record<string, string> };
 const defOf = (schema: z.ZodType) => (schema as unknown as { _zod: { def: Def } })._zod.def;
 
-/** Make a model's reply fit the schema: fill missing fields, fix enum casing or fall back, coerce scalars. */
 /** `{}` or `[]`: a reply with nothing in it. */
 function isEmptyJson(value: unknown): boolean {
   if (Array.isArray(value)) return value.length === 0;
   return typeof value === "object" && value !== null && Object.keys(value).length === 0;
 }
 
-export function coerceToSchema(schema: z.ZodType, value: unknown): unknown {
+/** A list sent in another shape: as JSON in a string, keyed like an object ({"1": {…}}), or one item on its own. */
+function listFrom(value: unknown): unknown[] {
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  if (isRecord(value)) {
+    const values = Object.values(value);
+    return values.length && values.every(isRecord) ? values : [value];
+  }
+  return [];
+}
+
+/**
+ * Make a model's reply fit the schema: fill missing fields, fix enum casing or fall back, coerce
+ * scalars, and recover lists sent in another shape. With `notes`, says what didn't fit: the
+ * reply's missing and unexpected fields, and lists that weren't lists.
+ */
+export function coerceToSchema(schema: z.ZodType, value: unknown, notes?: string[], path = ""): unknown {
   const def = defOf(schema);
   switch (def.type) {
     case "object": {
       const source = isRecord(value) ? value : {};
-      return Object.fromEntries(Object.entries(def.shape ?? {}).map(([key, field]) => [key, coerceToSchema(field, source[key])]));
+      const shape = def.shape ?? {};
+      if (notes && !path && isRecord(value)) {
+        const missing = Object.keys(shape).filter((key) => source[key] === undefined);
+        const unexpected = Object.keys(source).filter((key) => !(key in shape));
+        if (missing.length) notes.push(`missing ${missing.join(", ")}`);
+        if (unexpected.length) notes.push(`unexpected ${unexpected.join(", ")}`);
+      }
+      return Object.fromEntries(Object.entries(shape).map(([key, field]) => [key, coerceToSchema(field, source[key], notes, path ? `${path}.${key}` : key)]));
     }
     case "array": {
-      const items = Array.isArray(value) ? value : [];
+      const items = Array.isArray(value) ? value : listFrom(value);
+      if (notes && !Array.isArray(value) && value !== undefined && value !== null) {
+        notes.push(`${path || "the reply"} came as ${typeof value === "string" ? "a string" : typeof value === "object" ? "an object" : typeof value}${items.length ? `, read as ${items.length} item(s)` : ""}`);
+      }
       const element = def.element!;
       if (defOf(element).type === "enum") {
         const options = Object.values(defOf(element).entries ?? {});
         return items.map((item) => matchEnum(options, item)).filter((item): item is string => item !== undefined);
       }
-      return items.map((item) => coerceToSchema(element, item));
+      return items.map((item, i) => coerceToSchema(element, item, notes, `${path}[${i}]`));
     }
     case "enum": {
       const options = Object.values(def.entries ?? {});
       return matchEnum(options, value) ?? options[0];
     }
     case "nullable":
-      return value === null || value === undefined ? null : coerceToSchema(def.innerType!, value);
+      return value === null || value === undefined ? null : coerceToSchema(def.innerType!, value, notes, path);
     case "number": {
       const n = typeof value === "number" ? value : Number(value);
       const finite = Number.isFinite(n) ? n : 0;
@@ -279,7 +310,9 @@ export class OpenAIGameAI implements GameAI {
           text = await this.#complete({ ...run, stream: undefined }, this.#body(run, retry, mode));
           data = extractJson(text);
         }
-        const result = run.schema.safeParse(coerceToSchema(run.schema, data));
+        const notes: string[] = [];
+        const result = run.schema.safeParse(coerceToSchema(run.schema, data, notes));
+        if (notes.length) this.#opts.log?.(`[openai] ${run.task}: the reply didn't fit the schema (${notes.join("; ").slice(0, 300)})`);
         if (!result.success) throw new AiOutputError(result.error.issues[0]?.message ?? "invalid reply");
         return result.data;
       } catch (error) {
