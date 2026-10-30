@@ -223,14 +223,31 @@ docs/          DESIGN.md: research, learning design, AI design, compliance
   - full expeditions, conversation and debriefs;
   - voice input from a synthesized speech clip, and pronunciation scoring;
   - a Seedream postcard painted through mm-gateway;
-  - a whole mediation.
+  - a whole mediation;
+  - the Maps agent tools and walking routes (v3). Place search answers in about 1.7 s, and every place carries its Google Maps link. Weather takes 0.2–0.3 s where Google covers it; it has none for Kyoto, for one, and the game then uses Open-Meteo's. A walking route takes 0.1–0.2 s.
 
   With thinking off, an expedition takes 9.5–20 s, a persona 11–24 s, a chat reply 3–11 s (its first words show after a median 3.4 s) and a debrief 9–14 s. The briefing shows while the locals are still being written. `qwen3.8-max` with thinking took about 4 minutes per expedition. Every measurement is in `docs/DESIGN.md` §7.4.
-- **New in v3, and verified here without live services**: the settings page and hot reload, output caps, the heard words first, the arrival log, the shared Postgres store (against a real Postgres), the evaluation harness (with Demo AI), the speech-model voices (against a simulated server) and the new languages. Their first live runs happen in CI on the next push to `main`.
+- **New in v3, verified live in CI** in four runs on the omni model (October 2026):
+  - output caps: three runaway answers were cut off and asked for again;
+  - the heard words first;
+  - the arrival log;
+  - the evaluation pass;
+  - the Maps agent tools and walking routes;
+  - the Android mediation and voice tests.
+- **New in v3, verified without live services**:
+  - the settings page and hot reload, in the browser tests;
+  - the shared Postgres store, against a real Postgres;
+  - the SQLite store;
+  - the speech-model voices, against a simulated server;
+  - the new languages.
 - **Claude is not yet verified live.** It is tested against the SDK's request and streaming contract with simulated responses. The evaluation harness is ready for it: CI runs it with Claude as soon as the repository has an `ANTHROPIC_API_KEY` secret.
 - **Voices**: the org's omni model hears but doesn't speak (its server rejects audio output), so locals use the browser's voices there. A speech model (`VOICE_TTS_MODEL`) or a model that speaks (gpt-4o-audio, for example) is tested only against a simulated server so far; CI requires real speech once the `VOICE_TTS_MODEL` variable is set.
-- **Maps agent tools have no live run yet**, and neither do walking routes. Google documents their inputs but not all output fields. The parser accepts several shapes and logs the result keys on first use. CI's probe and real suite exercise them once the `GOOGLE_MAPS_SERVER_KEY` secret is set.
-- **The Android voice and mediation tests run in CI only**: this machine has no Android device image. The same voice flow passes on desktop Chromium with the fake microphone.
+- **CI's Maps server key is the browser key** (`GOOGLE_MAPS_API_KEY`, when there's no `GOOGLE_MAPS_SERVER_KEY` secret). That works only while the browser key has no referrer restriction, and anyone can read the browser key from the page. A production server should have a server key of its own, restricted by API.
+- **What the evaluation found on the omni model:**
+  - The judge finds most insights only partly supported by the sources they cite (21 of 28): the model adds detail its sources don't have.
+  - In three of the four runs, one to three locals came back with no insights, even after the engine asked a second time.
+  - These are next for prompt work (`docs/DESIGN.md` §12).
+- **The Android voice and mediation tests run in CI only**, where they pass; this machine has no Android device image. The same voice flow passes on desktop Chromium with the fake microphone.
 - **Demo AI speaks English only.** It's deliberately simple and labelled as such: for trying the game, for classrooms without API budgets, and for tests.
 
 ## Safety and privacy

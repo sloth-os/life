@@ -276,6 +276,14 @@ The real-services expedition test went from 8.5–11 minutes to about 1. With vo
 2. **The heard words come first.** `/api/voice/listen` answers with server-sent events when asked: the transcript as the voice model writes it, then the delivery notes. The words fill the message box as they arrive, and the box stays read-only until the notes are in, so the line is sent with how it sounded. The voice log line records when the first words came.
 3. **The time to the briefing is logged**, for every expedition: `[arrival] Kyoto openai grounding=…ms briefing=…ms locals=…ms walks=…ms total=…ms sources=…`. The briefing time is the wait a player actually sees on arrival.
 
+**Measured live in v3.** Four CI runs of the real-services suite and the evaluation on the v3 branch (October 2026, the same model, 26 arrivals):
+- **The briefing shows after 4.1–18.1 s**, a median of 7.6 s, and the locals are ready after 9.5–27.6 s. Walking times add about 0.2 s.
+- **Open-Meteo held up the briefing.** It timed out in 7 of the 26 arrivals, each time adding its full 8 s, while every answer it did give came within the arrivals' normal grounding time (at most 2.4 s, Google searches included). It now gets 3 s.
+- **The caps stopped three runaway answers.** Two personas ran to 17,600 characters after 64–66 s, and an expedition to 31,500. Each was cut off at its cap and asked again briefly; each retry came back a normal length.
+  - The expedition's cap of 6,000 tokens still let that arrival take 2.7 minutes, when a normal expedition is 2,300–3,500 characters.
+  - A lower cap would stop runaways sooner. It should wait until answers in Chinese and Japanese have been measured, since they use more tokens per character. Meanwhile each cap can be set on the settings page.
+- **The heard words come 0.6–0.9 s before the delivery notes** on this model. It writes nothing until it has taken in the whole clip: first words after 9.8–12.6 s for a 7 s clip.
+
 ### 7.5 Evaluation plan (for prompt iteration)
 - **Partner realism**: on scripted learner transcripts (rude, generic, excellent), check that rapport moves in the right direction, insights are withheld before thresholds, and boundaries hold.
 - **Stereotype audit**: generate personas for 50 places and run a marked-words scan (banned-trope lexicon). Human review samples.
@@ -311,6 +319,13 @@ The interface speaks English, Spanish, Simplified Chinese, French, Brazilian Por
 What Google Maps contributes:
 1. **Maps JavaScript API** (display): world map, Advanced Markers (postcards, stamps, locals), camera fly-ins, and **Street View** at each local's place for an on-the-ground view. While an expedition is prepared, a **photorealistic 3D fly-in** (`Map3DElement`, `maps3d` library) descends on the destination and circles it. It is skipped with reduced motion, or when the 3D library or WebGL isn't available.
 2. **Maps Experience agent tools** (formerly *Maps Grounding Lite*; MCP at `https://mapstools.googleapis.com/mcp`): `search_places` (one query per lens near the destination) and `lookup_weather` ground the Game Master in real places and today's weather. The "go anywhere" text search also goes through `search_places`. Summaries come in the player's language (`language_code`). With `MAPS_WALKING_ROUTES`, `compute_routes` adds walking times to each local, shown with Google attribution and dropped with the coordinates after 30 days.
+
+**Live** (CI, October 2026, with the browser key, which has no referrer restriction):
+- `search_places` answers in 1.5–1.7 s with four or five places, every one with its Google Maps link. Its result keys are `contentToken`, `places` and `summary`.
+- `lookup_weather` takes 0.2–0.3 s where Google has weather. For Kyoto it answers "Information is not supported for this location", and the game then uses Open-Meteo's.
+- `compute_routes` takes 0.1–0.2 s.
+
+A tool's error answer is only an answer. The client used to treat it as a broken session and close the connection the other calls share, which failed Kyoto's five place searches. It no longer does.
 
 The v1 roadmap's "Pro agent-tools options (review-based place insights)" turned out not to exist. The documented tools are `search_places`, `lookup_weather`, `compute_routes`, `resolve_names` and `resolve_maps_urls`, without reviews. Places API reviews can't feed an LLM under §3.2.3(c), so walking routes and localized summaries took that slot.
 
@@ -414,12 +429,15 @@ Long calls (expedition, persona, scene, debrief) answer with **server-sent event
   - A shared Postgres store, so classroom mode and the settings run on several instances, or a SQLite file for one machine without a database server (§4.6, §10).
   - The evaluation pass as code, run in CI on the omni model, and with Claude once a key is there (§7.5).
   - Speaking locals through a speech model (§7.6), checked live in CI once one is configured.
-  - Maps agent tools and walking routes probed live and asserted in the real suite once CI has a server key (§8).
+  - Maps agent tools and walking routes, live in CI's probe and real suite (§8).
   - French, Brazilian Portuguese and Japanese (§7.8).
   - Mediation and voice on the Android test devices, and voice mode in the desktop browser tests against a stand-in voice model.
 - **Next**: what code can't do on its own.
-  - The live runs that wait only for credentials: Claude (`ANTHROPIC_API_KEY`), the Maps agent tools and walking routes (`GOOGLE_MAPS_SERVER_KEY`), and a speaking voice (`VOICE_TTS_MODEL`). CI runs each as soon as it is set; their results should then be written up here, as v2's measurements were.
-  - Prompt changes driven by what the evaluation reports find.
+  - The live runs that wait only for credentials: Claude (`ANTHROPIC_API_KEY`) and a speaking voice (`VOICE_TTS_MODEL`). CI runs each as soon as it is set; their results should then be written up here, as v2's measurements were.
+  - Prompt changes driven by what the evaluation reports find. On the omni model:
+    - Most insights are only partly supported by the sources they cite (21 of 28 judged): the model adds detail they don't have.
+    - Now and then a local comes back with no insights twice running. The server now logs replies that don't fit the schema, so the next live runs show whether the insights come in another shape or not at all.
+  - Lower output caps, once answers in every language have been measured (§7.4).
 
 ## References
 

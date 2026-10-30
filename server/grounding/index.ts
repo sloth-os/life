@@ -159,9 +159,11 @@ export class GroundingService {
     const localityPromise: Promise<Locality> =
       postcard || google ? Promise.resolve(knownLocality) : settle(nominatimReverse(center.lat, center.lng, { ...http, cache: this.#geocodeCache }), knownLocality, "reverse geocoding", (m) => this.#log(m));
 
+    // The briefing waits for grounding, and weather is a detail: Open-Meteo answers in well under a
+    // second or not at all (in CI it timed out in 7 of 26 arrivals, each holding the briefing 8 s).
     const conditionsPromise: Promise<LocalConditions> = coordsAreGoogleContent
       ? Promise.resolve({})
-      : settle(openMeteoNow(center.lat, center.lng, { ...http, cache: this.#weatherCache }), {}, "Open-Meteo", (m) => this.#log(m));
+      : settle(openMeteoNow(center.lat, center.lng, { ...http, cache: this.#weatherCache, timeoutMs: 3_000 }), {}, "Open-Meteo", (m) => this.#log(m));
 
     const googleWeatherPromise = google && mapsTools ? settle(mapsTools.lookupWeather(center).then((w) => w as typeof w | null), null, "lookup_weather", (m) => this.#log(m)) : Promise.resolve(null);
 
