@@ -82,6 +82,7 @@ describe("MapsAgentTools over MCP", () => {
         },
         async (args) => {
           calls.push({ tool: "search_places", args });
+          if (args.text_query.startsWith("slow")) await new Promise((r) => setTimeout(r, 150));
           return {
             content: [
               {
@@ -97,6 +98,10 @@ describe("MapsAgentTools over MCP", () => {
       );
       mcp.registerTool("lookup_weather", { description: "Weather", inputSchema: { location: z.object({ lat_lng: z.object({ latitude: z.number(), longitude: z.number() }) }), units_system: z.string().optional() } }, async (args) => {
         calls.push({ tool: "lookup_weather", args });
+        // Google's weather doesn't cover every place; it answers with an error result instead.
+        if (args.location.lat_lng.latitude > 30) {
+          return { isError: true, content: [{ type: "text" as const, text: JSON.stringify({ summary: "Information is not supported for this location. Please try a different location." }) }] };
+        }
         return { content: [{ type: "text" as const, text: JSON.stringify({ currentConditions: { temperature: { degrees: 24.2 }, weatherCondition: { description: { text: "Partly cloudy" } }, isDaytime: true } }) }] };
       });
       mcp.registerTool(
@@ -147,6 +152,18 @@ describe("MapsAgentTools over MCP", () => {
       destination: { lat_lng: { latitude: -1.2833, longitude: 36.8271 } },
       travel_mode: "WALK",
     });
+    await tools.close();
+  });
+
+  it("keeps the connection when a tool answers with an error, so calls alongside it finish", async () => {
+    const tools = new MapsAgentTools({ apiKey: "maps-key", endpoint: url });
+    const kyoto = { lat: 35.0116, lng: 135.7681 };
+    const searches = Array.from({ length: 5 }, (_, i) => tools.searchPlaces(`slow search ${i}`, kyoto));
+    await expect(tools.lookupWeather(kyoto)).rejects.toThrow(/not supported for this location/);
+    const found = await Promise.all(searches);
+    expect(found.every((f) => f.places.length === 1)).toBe(true);
+    // An error answer isn't retried: the place isn't covered, asking again won't change that.
+    expect(calls.filter((c) => c.tool === "lookup_weather" && (c.args as { location: { lat_lng: { latitude: number } } }).location.lat_lng.latitude > 30)).toHaveLength(1);
     await tools.close();
   });
 });
