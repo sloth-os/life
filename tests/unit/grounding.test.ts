@@ -74,6 +74,21 @@ describe("GroundingService (google mode)", () => {
     expect(grounding.placeGrounding).toBe("google");
   });
 
+  it("uses Open-Meteo's weather where Google's doesn't reach", async () => {
+    const unsupported = {
+      ...mapsTools,
+      searchPlaces: mapsTools.searchPlaces.bind(mapsTools),
+      lookupWeather: async () => {
+        throw new Error('lookup_weather failed: {"summary":"Information is not supported for this location. Please try a different location."}');
+      },
+    } as unknown as MapsAgentTools;
+    const grounding = new GroundingService({ config: { mapsMode: "google", userAgent: "test", wikipediaLang: "en" }, mapsTools: unsupported, fetchImpl: fakeOpenDataFetch(), log: quiet });
+    const pack = await grounding.gather({ lat: 35.0116, lng: 135.7681, label: "Kyoto", postcardId: "kyoto", source: "postcard" });
+    expect(pack.weather).toMatchObject({ provider: "open-meteo" });
+    expect(pack.sources.find((s) => s.id === "WX")?.attribution).toBe(pack.weather?.attribution);
+    expect(pack.places.some((p) => p.kind === "google_place")).toBe(true);
+  });
+
   it("never sends coordinates from a Google search result to third parties", async () => {
     const fetchImpl = fakeOpenDataFetch();
     const grounding = new GroundingService({ config: { mapsMode: "google", userAgent: "test", wikipediaLang: "en" }, mapsTools, fetchImpl, log: quiet });

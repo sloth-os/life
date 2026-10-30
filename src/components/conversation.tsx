@@ -34,9 +34,10 @@ type VoiceState = { kind: "idle" } | { kind: "recording"; recording: Recording; 
 
 /**
  * Speak a message through the server's voice model: record, then the model hears what was said
- * (into `onHeard`) and how it sounded (kept as `delivery` until the message is sent or discarded).
+ * (into `onHeard`, word by word as the model writes it, then once more with `final`) and how it
+ * sounded (kept as `delivery` until the message is sent or discarded).
  */
-export function useVoiceInput(context: string, onHeard: (transcript: string) => void) {
+export function useVoiceInput(context: string, onHeard: (transcript: string, final: boolean) => void) {
   const config = useGame().ui.config;
   const available = Boolean(config?.features.voice) && canRecord();
   const [voice, setVoice] = useState<VoiceState>({ kind: "idle" });
@@ -49,11 +50,19 @@ export function useVoiceInput(context: string, onHeard: (transcript: string) => 
     setLevel(0);
     try {
       const audio = await recording.stop();
-      const heard = await api.listen({ audio: audio.base64, context });
+      // The words go into the message box as they arrive, so the player can check them while the
+      // model is still writing how they sounded.
+      let streamed = false;
+      const heard = await api.listen({ audio: audio.base64, context }, (words) => {
+        streamed = true;
+        onHeard(words, false);
+      });
       if (!heard.transcript.trim()) {
+        // Nothing heard: what the player had typed stays, unless words already replaced it.
+        if (streamed) onHeard("", true);
         toast("info", t("voice.didntCatch"), t("voice.closer"));
       } else {
-        onHeard(heard.transcript);
+        onHeard(heard.transcript, true);
         setDelivery(heard);
       }
     } catch (error) {
@@ -79,7 +88,7 @@ export function useVoiceInput(context: string, onHeard: (transcript: string) => 
 
   /** The delivery to send with the message, if it was spoken. */
   const spoken: Delivery | undefined = delivery ? { tone: delivery.tone, pace: delivery.pace, clarity: delivery.clarity, note: delivery.note } : undefined;
-  return { available, voice, level, seconds, delivery, spoken, setDelivery, toggle };
+  return { available, voice, level, seconds, delivery, spoken, setDelivery, toggle, hearing: voice.kind === "hearing" };
 }
 
 export type VoiceInput = ReturnType<typeof useVoiceInput>;

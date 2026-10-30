@@ -3,7 +3,7 @@
 import OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { OpenAIGameAI, coerceToSchema, extractJson, strictJsonSchema } from "../../server/ai/openai.ts";
-import { NpcTurnDraftSchema, type NpcTurnDraft } from "../../server/ai/schemas.ts";
+import { NpcTurnDraftSchema, PersonaDraftSchema, type NpcTurnDraft } from "../../server/ai/schemas.ts";
 import { resolveAi } from "../../server/config.ts";
 import { HttpError } from "../../server/util/errors.ts";
 import { context, npc, player, turnRequest } from "./fixtures.ts";
@@ -206,6 +206,21 @@ describe("structured-output helpers", () => {
     });
   });
 
+  it("recovers lists sent in another shape, and says what didn't fit", () => {
+    const insight = { lens: "culture", title: "Pickles", fact: "Nishiki has sold pickles for centuries [W1].", source_ids: ["W1"], quiz: { question: "?", options: ["a", "b", "c", "d"], answer_index: 0 } };
+    const notes: string[] = [];
+    const asString = coerceToSchema(PersonaDraftSchema, { pronouns: "she/her", insights: JSON.stringify([insight, insight]), insight_list: [] }, notes) as { insights: unknown[] };
+    expect(asString.insights).toHaveLength(2);
+    expect(notes).toContain("insights came as a string, read as 2 item(s)");
+    expect(notes.some((n) => n.startsWith("missing personality,"))).toBe(true);
+    expect(notes).toContain("unexpected insight_list");
+    const keyed = coerceToSchema(PersonaDraftSchema, { insights: { first: insight, second: insight, third: insight } }) as { insights: { fact: string }[] };
+    expect(keyed.insights.map((i) => i.fact)).toEqual([insight.fact, insight.fact, insight.fact]);
+    const alone = coerceToSchema(PersonaDraftSchema, { insights: insight }) as { insights: { title: string }[] };
+    expect(alone.insights).toMatchObject([{ title: "Pickles" }]);
+    expect((coerceToSchema(PersonaDraftSchema, { insights: "none" }) as { insights: unknown[] }).insights).toEqual([]);
+  });
+
   it("extracts JSON from prose and fences", () => {
     expect(extractJson('Here: {"a": 1} hope that helps')).toEqual({ a: 1 });
     expect(extractJson('```json\n{"a": 2}\n```')).toEqual({ a: 2 });
@@ -233,5 +248,74 @@ describe("resolveAi", () => {
   it("refuses an OpenAI-compatible setup without a model, and unknown providers", () => {
     expect(() => resolveAi({ AI_PROVIDER: "openai" })).toThrow(/AI_MODEL/);
     expect(() => resolveAi({ AI_PROVIDER: "gemini" })).toThrow(/Unknown AI_PROVIDER/);
+  });
+});
+
+describe("bounded outputs", () => {
+  const caps = { turn: 1200, persona: 3000 };
+
+  it("caps each task's output, with room for reasoning when the task thinks", async () => {
+    const { ai, calls } = setup(() => streamed(JSON.stringify(turnDraft)), { maxTokens: caps, thinking: "auto", effort: { turn: "high" } });
+    await ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
+    // qwen3.8-max thinks at high effort, and servers count its reasoning as output.
+    expect(calls[0]!.body).toMatchObject({ max_tokens: 1200 + 16_000, enable_thinking: true });
+
+    const fast = setup(() => streamed(JSON.stringify(turnDraft)), { maxTokens: caps, effort: { turn: "low" } });
+    await fast.ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
+    expect(fast.calls[0]!.body).toMatchObject({ max_tokens: 1200, enable_thinking: false });
+  });
+
+  it("sends no cap when it is 0, and max_completion_tokens to OpenAI's reasoning models", async () => {
+    const none = setup(() => streamed(JSON.stringify(turnDraft)), { maxTokens: { turn: 0 } });
+    await none.ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
+    expect(none.calls[0]!.body).not.toHaveProperty("max_tokens");
+
+    const o = setup(() => streamed(JSON.stringify(turnDraft)), { maxTokens: caps, model: "gpt-5.2" });
+    await o.ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
+    expect(o.calls[0]!.body).toHaveProperty("max_completion_tokens");
+    expect(o.calls[0]!.body).not.toHaveProperty("max_tokens");
+  });
+
+  it("switches to max_completion_tokens when a server asks for it", async () => {
+    const { ai, calls, logs } = setup((call) =>
+      "max_tokens" in call.body
+        ? json({ error: { message: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." } }, 400)
+        : streamed(JSON.stringify(turnDraft)),
+    { maxTokens: caps });
+    await ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.body).toMatchObject({ max_completion_tokens: 1200 });
+    expect(logs.join("\n")).toContain("max_completion_tokens");
+  });
+
+  it("asks once more, briefly, when an answer is cut off at the cap", async () => {
+    const { ai, calls, logs } = setup((_call, i) => (i === 0 ? streamed(JSON.stringify(turnDraft).slice(0, 60), "length") : streamed(JSON.stringify(turnDraft))), { maxTokens: caps });
+    const draft = await ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
+    expect(draft.reply).toBe(turnDraft.reply);
+    expect(calls).toHaveLength(2);
+    const system = (calls[1]!.body.messages as { content: string }[])[0]!.content;
+    expect(system).toContain("Be brief");
+    expect(logs.join("\n")).toContain("cut off at the length limit");
+  });
+
+  it("gives up after a second cut-off", async () => {
+    const { ai, calls } = setup(() => streamed(JSON.stringify(turnDraft).slice(0, 60), "length"), { maxTokens: caps });
+    await expect(ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false })).rejects.toMatchObject({ code: "ai_output" });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("stops a server that ignores the cap, and allows for reasoning that ran long", async () => {
+    // A runaway: far past six characters per token of the cap, never finishing on its own.
+    const runaway = `{"reply": "${"la ".repeat(4000)}`;
+    const { ai, calls, logs } = setup((_call, i) => (i === 0 ? streamed(runaway, "stop") : streamed(JSON.stringify(turnDraft))), { maxTokens: { turn: 300 } });
+    const draft = await ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
+    expect(draft.reply).toBe(turnDraft.reply);
+    expect(logs.join("\n")).toMatch(/ran past 1800 chars/);
+    expect(calls).toHaveLength(2);
+
+    // Reasoning that fills the cap: the retry gets the thinking allowance.
+    const thinker = setup((_call, i) => (i === 0 ? streamed("", "length", "x".repeat(5000)) : streamed(JSON.stringify(turnDraft))), { maxTokens: caps, thinkingStyle: "none" });
+    await thinker.ai.npcTurn({ request: turnRequest(), turnNumber: 1, wrapUp: false });
+    expect(thinker.calls[1]!.body).toMatchObject({ max_tokens: 1200 + 16_000 });
   });
 });

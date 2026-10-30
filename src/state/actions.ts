@@ -14,7 +14,7 @@ import type { Debrief, Delivery, Destination, Expedition, ExpeditionContext, Med
 import { SKILL_IDS, skillLevelName } from "../../shared/skills.ts";
 import type { ScenarioId } from "../../shared/world.ts";
 import type { Assignment, ClassResultInput } from "../../shared/classroom.ts";
-import { ApiError, api, setAccessCode } from "../lib/api.ts";
+import { ApiError, api, setAccessCode, whenAccessRejected } from "../lib/api.ts";
 import { voiceLine } from "../lib/voice.ts";
 import { store } from "./store.ts";
 import type { ClassroomSave, DebriefResult, EncounterState, GameState, MediationState, PlayerProfile, Screen, Settings, Toast } from "./types.ts";
@@ -61,6 +61,10 @@ const ERROR_MESSAGES: Partial<Record<string, MessageKey>> = {
   not_in_class: "error.notInClass",
   assignment_gone: "error.assignmentGone",
   mentor_done: "error.mentorDone",
+  admin_key: "error.adminKey",
+  admin_locked: "error.adminLocked",
+  settings_conflict: "error.settingsConflict",
+  settings_off: "error.settingsOff",
   internal: "error.internal",
 };
 
@@ -76,6 +80,8 @@ export function message(error: unknown): string {
 const isAbort = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
 
 export function go(screen: Screen): void {
+  // /#settings opens the server's settings; leaving them drops it, so a reload doesn't go back.
+  if (screen !== "server" && window.location.hash === "#settings") history.replaceState(null, "", window.location.pathname + window.location.search);
   store.ui({ screen });
   window.scrollTo?.({ top: 0 });
 }
@@ -125,6 +131,26 @@ export async function loadConfig(): Promise<void> {
     store.ui({ configError: message(error) });
   }
 }
+
+/**
+ * The server's settings can change while the game is open (they apply without a restart): look
+ * again now and then, and take the new configuration when its revision moves on.
+ */
+export async function refreshConfig(): Promise<void> {
+  try {
+    const config = await api.config();
+    const current = store.get().ui.config;
+    if (current && current.revision === config.revision && current.version === config.version) return;
+    store.ui({ config, configError: null, needsAccessCode: config.accessCodeRequired && !store.get().settings.accessCode });
+  } catch {
+    // Offline for a moment: keep the configuration we have.
+  }
+}
+
+// An access code set or changed on the server while someone plays: ask them for it.
+whenAccessRejected(() => {
+  if (store.get().ui.screen !== "server") store.ui({ needsAccessCode: true });
+});
 
 export function submitAccessCode(code: string): void {
   setAccessCode(code.trim());

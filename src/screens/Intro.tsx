@@ -55,8 +55,20 @@ export function TitleScreen() {
         </ol>
         <ModeBadges />
         <LanguagePicker />
+        <ServerSettingsLink />
       </div>
     </div>
+  );
+}
+
+/** For whoever runs the server: its settings page (behind the settings key). */
+export function ServerSettingsLink() {
+  const config = useGame().ui.config;
+  if (!config?.settingsPage) return null;
+  return (
+    <button type="button" className="link-btn small server-link" onClick={() => go("server")} data-testid="server-settings-link">
+      ⚙️ {t("title.serverSettings")}
+    </button>
   );
 }
 
@@ -193,6 +205,7 @@ export function AccessGate() {
         <button type="submit" className="btn btn--primary" disabled={!code.trim()}>
           {t("common.continue")}
         </button>
+        <ServerSettingsLink />
       </form>
     </div>
   );

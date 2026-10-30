@@ -7,6 +7,9 @@ import { renderPlayer } from "../../server/ai/prompts.ts";
 import { LANGS, levelName, moveText, placeName, plural, postcardText, setLang, skillName, t, tierName } from "../../src/i18n/index.ts";
 import { en } from "../../src/i18n/en.ts";
 import { es } from "../../src/i18n/es.ts";
+import { fr } from "../../src/i18n/fr.ts";
+import { ja } from "../../src/i18n/ja.ts";
+import { pt } from "../../src/i18n/pt.ts";
 import { zh } from "../../src/i18n/zh.ts";
 import { player } from "./fixtures.ts";
 
@@ -21,10 +24,23 @@ describe("i18n", () => {
     expect(t("world.whereNext", { name: "小林" })).toBe("小林，下一站去哪儿？");
     setLang("es");
     expect(t("composer.turns", { turns: 2, cap: 12 })).toBe("2 de ~12 turnos");
+    setLang("fr");
+    // French keeps a no-break space before its high punctuation.
+    expect(t("world.whereNext", { name: "Léa" })).toBe("Où allons-nous, Léa\u00a0?");
+    setLang("ja");
+    expect(t("world.whereNext", { name: "ユキ" })).toBe("ユキさん、次はどこへ？");
+    setLang("pt");
+    expect(plural(1, "journal.visitOne", "journal.visits")).toBe("1 visita");
+  });
+
+  it("speaks six languages, and tells the model each one by name", () => {
+    expect(LANGS).toEqual(["en", "es", "zh", "fr", "pt", "ja"]);
+    expect(renderPlayer({ ...player, language: "ja" })).toContain("Japanese (日本語)");
+    expect(renderPlayer({ ...player, language: "pt" })).toContain("Brazilian Portuguese");
   });
 
   it("keeps every translation's placeholders the same as English", () => {
-    for (const translation of [es, zh]) {
+    for (const translation of [es, zh, fr, pt, ja]) {
       for (const [key, english] of Object.entries(en)) {
         const names = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
         expect(names(translation.ui[key as keyof typeof en]), key).toEqual(names(english));

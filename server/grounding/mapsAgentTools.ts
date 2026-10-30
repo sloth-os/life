@@ -7,6 +7,7 @@
 // (camelCase or snake_case, structuredContent or JSON text).
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { JsonSchemaValidator, jsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/types.js";
 import type { LatLng } from "../../shared/schemas.ts";
 import type { FetchLike } from "../util/http.ts";
 
@@ -194,6 +195,20 @@ export function parseRoute(payload: unknown): AgentWalk | null {
   return { minutes: Math.max(1, Math.round((s ?? meters / 1.3) / 60)), meters };
 }
 
+/** A tool's own error answer ("not supported for this location"): the connection is fine. */
+class ToolAnswerError extends Error {}
+
+/**
+ * Accepts every tool result as it comes: our parsers read several shapes, so the SDK needn't hold
+ * Google's answers to their declared output schemas (which also use formats Ajv doesn't know,
+ * such as google-duration, and warned about them on every connect).
+ */
+const acceptAnyOutput: jsonSchemaValidator = {
+  getValidator<T>(): JsonSchemaValidator<T> {
+    return (input) => ({ valid: true, data: input as T, errorMessage: undefined });
+  },
+};
+
 export class MapsAgentTools {
   readonly #opts: MapsAgentToolsOptions;
   #client: Promise<{ client: Client; tools: Map<string, ToolDef> }> | null = null;
@@ -208,7 +223,7 @@ export class MapsAgentTools {
       requestInit: { headers: { "X-Goog-Api-Key": this.#opts.apiKey } },
       fetch: this.#opts.fetchImpl,
     });
-    const client = new Client({ name: "common-ground", version: this.#opts.version ?? "0.1.0" });
+    const client = new Client({ name: "common-ground", version: this.#opts.version ?? "0.1.0" }, { jsonSchemaValidator: acceptAnyOutput });
     await client.connect(transport);
     const listed = await client.listTools();
     const tools = new Map(listed.tools.map((t) => [t.name, { name: t.name, inputSchema: t.inputSchema as Json }]));
@@ -225,20 +240,27 @@ export class MapsAgentTools {
 
   async #call(name: string, args: (tools: Map<string, ToolDef>) => Json): Promise<unknown> {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const session = await this.#session();
+      const current = this.#session();
+      const session = await current;
       try {
         const result = (await session.client.callTool({ name, arguments: args(session.tools) })) as ToolResult;
         const payload = payloadOf(result);
-        if (result.isError) throw new Error(`${name} failed: ${JSON.stringify(payload).slice(0, 200)}`);
+        if (result.isError) throw new ToolAnswerError(`${name} failed: ${JSON.stringify(payload).slice(0, 200)}`);
         if (!this.#loggedShapes.has(name) && isObject(payload)) {
           this.#loggedShapes.add(name);
           this.#opts.log?.(`[maps-agent-tools] ${name} result keys: ${Object.keys(payload).join(", ")}`);
         }
         return payload;
       } catch (error) {
-        // Sessions can expire; reconnect once before giving up.
-        this.#client = null;
-        await session.client.close().catch(() => {});
+        // The tool answered: asking again won't change it, and the connection is still good for
+        // the calls running alongside this one.
+        if (error instanceof ToolAnswerError) throw error;
+        // Sessions can expire; reconnect once before giving up. Only the first call to notice
+        // replaces the session, so a retry never closes the one another call just opened.
+        if (this.#client === current) {
+          this.#client = null;
+          void session.client.close().catch(() => {});
+        }
         if (attempt === 1) throw error;
       }
     }

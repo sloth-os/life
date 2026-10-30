@@ -33,19 +33,19 @@ describe("ClassroomStore", () => {
   it("runs a class: assignments, students, results and the class debrief", async () => {
     const dir = await mkdtemp(join(tmpdir(), "life-classes-"));
     const store = await ClassroomStore.open(dir);
-    const { code, teacherKey } = store.create("9B", "Ms Rivera");
+    const { code, teacherKey } = await store.create("9B", "Ms Rivera");
     expect(code).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
-    const a = store.addAssignment(code, teacherKey, assignment);
-    const lin = store.join(code.toLowerCase(), "Lin");
-    const sam = store.join(code, "Sam");
+    const a = await store.addAssignment(code, teacherKey, assignment);
+    const lin = await store.join(code.toLowerCase(), "Lin");
+    const sam = await store.join(code, "Sam");
     expect(lin.view.assignments).toEqual([a]);
 
-    store.submit(code, result(lin.studentId, a.id));
-    store.submit(code, result(sam.studentId, a.id, { scores: { listening: 1 }, goalAchieved: false, growthSkill: "listening", calibrationGap: 2 }));
+    await store.submit(code, result(lin.studentId, a.id));
+    await store.submit(code, result(sam.studentId, a.id, { scores: { listening: 1 }, goalAchieved: false, growthSkill: "listening", calibrationGap: 2 }));
     // A second attempt replaces the first.
-    store.submit(code, result(lin.studentId, a.id, { scores: { listening: 4, curiosity: 2 }, calibrationGap: 0 }));
+    await store.submit(code, result(lin.studentId, a.id, { scores: { listening: 4, curiosity: 2 }, calibrationGap: 0 }));
 
-    const dashboard = store.dashboard(code, teacherKey);
+    const dashboard = await store.dashboard(code, teacherKey);
     expect(dashboard.students.map((s) => s.name)).toEqual(["Lin", "Sam"]);
     const [summary] = dashboard.assignments;
     expect(summary).toMatchObject({ completed: 2, goalRate: 50, averageCalibration: 1 });
@@ -59,29 +59,31 @@ describe("ClassroomStore", () => {
     // Survives a restart.
     await store.flush();
     const reopened = await ClassroomStore.open(dir);
-    expect(reopened.dashboard(code, teacherKey).assignments[0]!.completed).toBe(2);
+    expect((await reopened.dashboard(code, teacherKey)).assignments[0]!.completed).toBe(2);
   });
 
   it("keeps the class debrief and assignments to the teacher, and results to members", async () => {
     const store = await ClassroomStore.open(await mkdtemp(join(tmpdir(), "life-classes-")));
-    const { code, teacherKey } = store.create("9B", "Ms Rivera");
-    const a = store.addAssignment(code, teacherKey, assignment);
-    const status = (fn: () => unknown) => {
+    const { code, teacherKey } = await store.create("9B", "Ms Rivera");
+    const a = await store.addAssignment(code, teacherKey, assignment);
+    const status = async (fn: () => Promise<unknown>) => {
       try {
-        fn();
+        await fn();
         return 0;
       } catch (error) {
         return (error as HttpError).status;
       }
     };
-    expect(status(() => store.dashboard(code, "guess"))).toBe(403);
-    expect(status(() => store.dashboard(code, undefined))).toBe(403);
-    expect(status(() => store.addAssignment(code, "guess", assignment))).toBe(403);
-    expect(status(() => store.view("NOPE00"))).toBe(404);
-    expect(status(() => store.submit(code, result("not-a-member-id", a.id)))).toBe(403);
-    const lin = store.join(code, "Lin");
-    expect(status(() => store.submit(code, result(lin.studentId, "as_gone")))).toBe(404);
-    store.removeAssignment(code, teacherKey, a.id);
-    expect(store.view(code).assignments).toEqual([]);
+    expect(await status(() => store.dashboard(code, "guess"))).toBe(403);
+    expect(await status(() => store.dashboard(code, undefined))).toBe(403);
+    expect(await status(() => store.addAssignment(code, "guess", assignment))).toBe(403);
+    expect(await status(() => store.view("NOPE00"))).toBe(404);
+    expect(await status(() => store.submit(code, result("not-a-member-id", a.id)))).toBe(403);
+    const lin = await store.join(code, "Lin");
+    expect(await status(() => store.submit(code, result(lin.studentId, "as_gone")))).toBe(404);
+    // A refused change leaves the class as it was.
+    expect((await store.dashboard(code, teacherKey)).assignments).toHaveLength(1);
+    await store.removeAssignment(code, teacherKey, a.id);
+    expect((await store.view(code)).assignments).toEqual([]);
   });
 });

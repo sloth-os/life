@@ -1,17 +1,21 @@
 // Probe the configured AI services with tiny requests and report what each server accepts and how
 // fast it answers: the text model in each structured-output mode (with the thinking switch the game
-// sends), the voice model speaking and listening, and the image gateway. CI runs it before the
+// sends), the voice model speaking and listening, the image gateway, and the Maps agent tools
+// (search, weather, a walking route, with the shape of each answer). CI runs it before the
 // real-services suite, so a misconfigured service fails fast with the server's own answer.
 //   node scripts/probe-ai.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import OpenAI from "openai";
-import { detectThinkingStyle, loadConfig, loadDotEnv } from "../server/config.ts";
+import { detectThinkingStyle } from "../server/config.ts";
+import { loadEffectiveConfig } from "../server/settings/load.ts";
 import { thinkingFields } from "../server/ai/openai.ts";
 import { VoiceService, wavDurationMs, wordOverlap } from "../server/ai/voice.ts";
 import { ImageGateway } from "../server/images.ts";
+import { MapsAgentTools } from "../server/grounding/mapsAgentTools.ts";
+import type { LatLng } from "../shared/schemas.ts";
 
-loadDotEnv();
-const config = loadConfig();
+// What the game would run with: the environment, .env and anything saved on the settings page.
+const config = await loadEffectiveConfig();
 const OUT = "test-results/probe";
 await mkdir(OUT, { recursive: true });
 let failures = 0;
@@ -133,9 +137,57 @@ async function probeImages(): Promise<void> {
   }
 }
 
+/** Maps Experience agent tools, live: the calls the Game Master's grounding makes. */
+async function probeMaps(): Promise<void> {
+  if (!config.googleMapsServerKey) {
+    console.log("maps: no GOOGLE_MAPS_SERVER_KEY (with GOOGLE_MAPS_API_KEY); grounding uses Wikipedia.");
+    return;
+  }
+  // The client logs each tool's result keys the first time, which is what the parser has to fit.
+  const tools = new MapsAgentTools({ apiKey: config.googleMapsServerKey, log: (m) => console.log(m), version: config.version });
+  const kyoto = { lat: 35.005, lng: 135.7649 };
+  // Each tool on its own, so one failing doesn't hide how the others answer.
+  const step = async (name: string, run: () => Promise<string>): Promise<boolean> => {
+    const started = Date.now();
+    try {
+      console.log(`maps ${name}: ${await run()} in ${Date.now() - started}ms`);
+      return true;
+    } catch (error) {
+      console.log(`maps ${name} failed: ${describe(error)}`);
+      return false;
+    }
+  };
+  try {
+    let to: LatLng | undefined;
+    const searched = await step("search_places", async () => {
+      const found = await tools.searchPlaces("food market near Nishiki Market, Kyoto", kyoto, 2000, "en");
+      if (!found.places.length) throw new Error(`no places (summary: ${found.summary.slice(0, 120)})`);
+      to = found.places.find((p) => p.location)?.location;
+      return `${found.places.length} places (${found.places.filter((p) => p.mapsUrl).length} with Google Maps links), summary ${found.summary.length} chars`;
+    });
+    if (!searched) failures++;
+    // Google's weather doesn't cover every place (it has none for Kyoto); the game then uses
+    // Open-Meteo's. The tool works if it answers somewhere it covers.
+    const weather = (where: string, at: LatLng) => step(`lookup_weather (${where})`, async () => JSON.stringify((await tools.lookupWeather(at)).summary));
+    if (!(await weather("Kyoto", kyoto)) && !(await weather("London", { lat: 51.5074, lng: -0.1278 }))) failures++;
+    if (to) {
+      const target = to;
+      const walked = await step("compute_routes (walk)", async () => {
+        const walk = await tools.walkingRoute(kyoto, target);
+        if (!walk) throw new Error("no route");
+        return `${walk.minutes} min, ${walk.meters} m`;
+      });
+      if (!walked) failures++;
+    }
+  } finally {
+    await tools.close();
+  }
+}
+
 await probeText();
 await probeVoice();
 await probeImages();
+await probeMaps();
 if (failures) {
   console.error(`probe: ${failures} service(s) failed.`);
   process.exit(1);

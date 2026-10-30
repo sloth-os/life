@@ -6,6 +6,7 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { HttpError } from "../util/errors.ts";
 import { coerceToSchema, extractJson, strictJsonSchema, stripThinking, toHttpError } from "./openai.ts";
+import { extractPartialString } from "./partialJson.ts";
 
 /** Wrap 16-bit little-endian mono PCM in a WAV header. */
 export function wavFromPcm16(pcm: Buffer, sampleRate: number): Buffer {
@@ -68,7 +69,10 @@ ${JSON.stringify(strictJsonSchema(PronunciationDraftSchema))}`;
 
 export interface VoiceServiceOptions {
   client: OpenAI;
-  model: string;
+  /** The model that hears (and may speak); without one the game doesn't listen. */
+  model?: string;
+  /** A text-to-speech model on the speech endpoint; when set, it gives the locals their voices. */
+  ttsModel?: string;
   /** The first for she/her, the second for he/him; others take turns. */
   voices: string[];
   /** Sample rate of the PCM the model streams (Qwen-Omni and OpenAI both use 24 kHz). */
@@ -77,7 +81,9 @@ export interface VoiceServiceOptions {
 }
 
 export interface SpeakResult {
+  /** The audio: WAV, or whatever a speech endpoint sent back (see mimeType). */
   wav: Buffer;
+  mimeType: string;
   /** What the model says it read (to spot a model that answered instead of reading). */
   transcript: string;
   durationMs: number;
@@ -102,20 +108,33 @@ export class VoiceService {
   /** Unknown until the first line: some omni models hear but can't speak (they reject audio output). */
   #canSpeak: boolean | null;
   #format: AudioFormat = "wav";
+  /** What the speech endpoint is asked for: WAV, or MP3 once a server turns WAV down. */
+  #ttsFormat: "wav" | "mp3" = "wav";
   #inputStyle: InputStyle = "data_uri";
   readonly #cache = new Map<string, SpeakResult>();
 
   constructor(opts: VoiceServiceOptions & { speak?: boolean }) {
     this.#opts = opts;
-    this.#canSpeak = opts.speak === false ? false : null;
+    this.#canSpeak = opts.speak === false && !opts.ttsModel ? false : null;
   }
 
-  get model(): string {
+  get model(): string | undefined {
     return this.#opts.model;
+  }
+
+  get ttsModel(): string | undefined {
+    return this.#opts.ttsModel;
+  }
+
+  /** Whether the game can hear the player (a model that listens is configured). */
+  get canListen(): boolean {
+    return Boolean(this.#opts.model);
   }
 
   /** False once the model has turned down speaking (the browser's voice is used instead). */
   get canSpeak(): boolean | null {
+    if (this.#opts.ttsModel) return this.#canSpeak === false ? false : true;
+    if (!this.#opts.model) return false;
     return this.#canSpeak;
   }
 
@@ -131,10 +150,16 @@ export class VoiceService {
 
   /** Read a line aloud. Results are cached, so replaying a line costs nothing. */
   async speak(text: string, voice: string, signal?: AbortSignal): Promise<SpeakResult> {
-    if (this.#canSpeak === false) throw new HttpError(501, "voice_cannot_speak", "This voice model listens but doesn't speak; the browser's voice is used instead.");
+    if (this.canSpeak === false) throw new HttpError(501, "voice_cannot_speak", "This voice model listens but doesn't speak; the browser's voice is used instead.");
     const key = `${voice}\u0000${text}`;
     const cached = this.#cache.get(key);
     if (cached) return cached;
+    if (this.#opts.ttsModel) {
+      const result = await this.#tts(text, voice, signal);
+      this.#cache.set(key, result);
+      if (this.#cache.size > 200) this.#cache.delete(this.#cache.keys().next().value!);
+      return result;
+    }
     for (;;) {
       const format = this.#format;
       try {
@@ -160,11 +185,43 @@ export class VoiceService {
     }
   }
 
+  /** A text-to-speech model on the speech endpoint (OpenAI's /audio/speech and the gateways that copy it). */
+  async #tts(text: string, voice: string, signal?: AbortSignal): Promise<SpeakResult> {
+    const started = Date.now();
+    const model = this.#opts.ttsModel!;
+    for (;;) {
+      const format = this.#ttsFormat;
+      try {
+        const response = await this.#opts.client.audio.speech.create({ model, voice: voice as OpenAI.Audio.SpeechCreateParams["voice"], input: text, response_format: format }, { signal, timeout: 60_000 });
+        const bytes = Buffer.from(await response.arrayBuffer());
+        if (bytes.length === 0) throw new HttpError(502, "voice_silent", "The voice model answered without audio.");
+        const mimeType = isWav(bytes) ? "audio/wav" : (response.headers.get("content-type")?.split(";")[0] ?? (format === "wav" ? "audio/wav" : "audio/mpeg"));
+        const durationMs = isWav(bytes) ? wavDurationMs(bytes) : 0;
+        this.#canSpeak = true;
+        this.#opts.log?.(`[voice] tts ${model} ${voice} ${mimeType} total=${Date.now() - started}ms bytes=${bytes.length}${durationMs ? ` audio=${durationMs}ms` : ""}`);
+        return { wav: bytes, mimeType, transcript: text, durationMs };
+      } catch (error) {
+        if (format === "wav" && error instanceof OpenAI.BadRequestError && /format|wav/i.test(error.message)) {
+          this.#opts.log?.(`[voice] the speech endpoint rejected wav (${error.message.slice(0, 160)}); asking for mp3`);
+          this.#ttsFormat = "mp3";
+          continue;
+        }
+        if (error instanceof OpenAI.NotFoundError || (error instanceof OpenAI.BadRequestError && /model/i.test(error.message))) {
+          this.#opts.log?.(`[voice] ${model} can't speak here (${error.message.slice(0, 160)}); locals use the browser's voice`);
+          this.#canSpeak = false;
+          throw new HttpError(501, "voice_cannot_speak", "This voice model can't speak; the browser's voice is used instead.");
+        }
+        this.#opts.log?.(`[voice] tts failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`);
+        throw toHttpError(error);
+      }
+    }
+  }
+
   async #speak(text: string, voice: string, format: AudioFormat, signal?: AbortSignal): Promise<SpeakResult> {
     const started = Date.now();
     const chunks = await this.#opts.client.chat.completions.create(
       {
-        model: this.#opts.model,
+        model: this.#opts.model!,
         stream: true,
         modalities: ["text", "audio"],
         audio: { voice: voice as OpenAI.ChatCompletionAudioParam["voice"], format },
@@ -193,12 +250,15 @@ export class VoiceService {
     const durationMs = wavDurationMs(wav);
     const overlap = transcript ? wordOverlap(text, transcript) : 1;
     this.#opts.log?.(`[voice] speak ${this.#opts.model} ${voice} ${format} first-audio=${firstAudio}ms total=${Date.now() - started}ms audio=${durationMs}ms overlap=${overlap.toFixed(2)}`);
-    return { wav, transcript: transcript.trim(), durationMs };
+    return { wav, mimeType: "audio/wav", transcript: transcript.trim(), durationMs };
   }
 
-  /** What the player said and how it sounded. */
-  listen(wav: Buffer, context: string, signal?: AbortSignal): Promise<DeliveryDraft> {
-    return this.#hear("listen", DeliveryDraftSchema, LISTEN_SYSTEM, wav, context, signal);
+  /**
+   * What the player said and how it sounded. The model writes the transcript first, so
+   * `onTranscript` gets the words as they are written, before the notes on delivery.
+   */
+  listen(wav: Buffer, context: string, signal?: AbortSignal, onTranscript?: (soFar: string) => void): Promise<DeliveryDraft> {
+    return this.#hear("listen", DeliveryDraftSchema, LISTEN_SYSTEM, wav, context, signal, onTranscript);
   }
 
   /** How close an attempt at a phrase came. */
@@ -207,7 +267,8 @@ export class VoiceService {
     return this.#hear("pronounce", PronunciationDraftSchema, PRONOUNCE_SYSTEM, wav, context, signal);
   }
 
-  async #hear<S extends z.ZodType>(task: string, schema: S, system: string, wav: Buffer, context: string, signal?: AbortSignal): Promise<z.infer<S>> {
+  async #hear<S extends z.ZodType>(task: string, schema: S, system: string, wav: Buffer, context: string, signal?: AbortSignal, onTranscript?: (soFar: string) => void): Promise<z.infer<S>> {
+    if (!this.#opts.model) throw new HttpError(404, "voice_off", "Voice mode isn't set up on this server.");
     for (;;) {
       const style = this.#inputStyle;
       const started = Date.now();
@@ -232,7 +293,21 @@ export class VoiceService {
           { signal, timeout: 120_000 },
         );
         let text = "";
-        for await (const chunk of chunks) text += chunk.choices[0]?.delta?.content ?? "";
+        let heardSoFar = "";
+        let firstWords = 0;
+        for await (const chunk of chunks) {
+          const delta = chunk.choices[0]?.delta?.content ?? "";
+          if (!delta) continue;
+          text += delta;
+          if (onTranscript) {
+            const words = extractPartialString(stripThinking(text), "transcript");
+            if (words !== null && words !== heardSoFar) {
+              firstWords ||= Date.now() - started;
+              heardSoFar = words;
+              onTranscript(words);
+            }
+          }
+        }
         if (signal?.aborted) throw new OpenAI.APIUserAbortError();
         const raw = extractJson(stripThinking(text));
         const parsed = schema.safeParse(coerceToSchema(schema, raw));
@@ -240,7 +315,7 @@ export class VoiceService {
         // Never the words themselves (they are the player's speech): just enough to see a misfit.
         const heard = (parsed.data as { transcript?: string }).transcript ?? "";
         const keys = raw && typeof raw === "object" ? Object.keys(raw).join(",") : typeof raw;
-        this.#opts.log?.(`[voice] ${task} ${this.#opts.model} ${style} total=${Date.now() - started}ms audio=${wavDurationMs(wav)}ms heard=${heard.length} chars keys=${keys}`);
+        this.#opts.log?.(`[voice] ${task} ${this.#opts.model} ${style}${firstWords ? ` first-words=${firstWords}ms` : ""} total=${Date.now() - started}ms audio=${wavDurationMs(wav)}ms heard=${heard.length} chars keys=${keys}`);
         return parsed.data;
       } catch (error) {
         if (style === "data_uri" && error instanceof OpenAI.BadRequestError) {

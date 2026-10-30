@@ -46,6 +46,12 @@ export function setAccessCode(code: string): void {
   accessCode = code;
 }
 
+/** Called when the server turns the access code down (it was set or changed while playing). */
+let onAccessRejected: () => void = () => {};
+export function whenAccessRejected(handler: () => void): void {
+  onAccessRejected = handler;
+}
+
 /** crypto.randomUUID only exists in secure contexts; a classroom server on plain http://<LAN IP> isn't one. */
 function randomId(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -72,9 +78,10 @@ function headers(json: boolean): HeadersInit {
   return h;
 }
 
-async function asError(response: Response): Promise<ApiError> {
+export async function asError(response: Response): Promise<ApiError> {
   try {
     const body = (await response.json()) as ApiErrorBody;
+    if (response.status === 401 && body.error === "access_code") onAccessRejected();
     return new ApiError(response.status, body.error ?? "error", body.message ?? `Request failed (${response.status})`);
   } catch {
     return new ApiError(response.status, "error", `Request failed (${response.status})`);
@@ -99,7 +106,7 @@ async function call<T>(path: string, body?: unknown, signal?: AbortSignal): Prom
 }
 
 /** Any method, with extra headers (the teacher's key), answering JSON or nothing. */
-async function send<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
+export async function send<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, { method, headers: { ...headers(body !== undefined), ...extra }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -131,7 +138,7 @@ export interface StreamHandlers {
   signal?: AbortSignal;
   onProgress?: (progress: StreamProgress) => void;
   onBriefing?: (briefing: ExpeditionBriefing) => void;
-  /** Text written so far: the local's reply, or the mentor's answer. */
+  /** Text written so far: the local's reply, the mentor's answer, or the words the voice model heard. */
   onText?: (text: string) => void;
 }
 
@@ -168,7 +175,7 @@ async function stream<T>(path: string, body: unknown, handlers: StreamHandlers =
       if (event === "error") throw new ApiError(Number(payload.status ?? 500), String(payload.error ?? "error"), String(payload.message ?? "Something went wrong."));
       if (event === "progress") handlers.onProgress?.(payload as unknown as StreamProgress);
       else if (event === "briefing") handlers.onBriefing?.(payload as unknown as ExpeditionBriefing);
-      else if (event === "reply" || event === "answer") handlers.onText?.(String(payload.text ?? ""));
+      else if (event === "reply" || event === "answer" || event === "transcript") handlers.onText?.(String(payload.text ?? ""));
     }
     if (done) break;
   }
@@ -193,7 +200,8 @@ export const api = {
   mediationDebrief: (body: MediationDebriefRequest, handlers?: StreamHandlers) => stream<Debrief>("/api/mediation/debrief", body, handlers),
   ask: (body: AskRequest, onAnswer: (text: string) => void) => stream<MentorAnswer>("/api/coach/ask", body, { onText: onAnswer }, "Your mentor's answer was cut off. Try asking again."),
   speak: (body: SpeakRequest, signal?: AbortSignal) => binary("/api/voice/speak", body, signal),
-  listen: (body: ListenRequest) => call<Heard>("/api/voice/listen", body),
+  /** What the player said (`onWords` gets it as the model writes it), then how it sounded. */
+  listen: (body: ListenRequest, onWords?: (text: string) => void) => stream<Heard>("/api/voice/listen", body, { onText: onWords }),
   pronounce: (body: PronounceRequest) => call<PronunciationResult>("/api/voice/pronounce", body),
   postcard: (body: PostcardRequest) => binary("/api/postcard", body),
   classes: {

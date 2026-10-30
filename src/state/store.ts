@@ -82,7 +82,8 @@ function toSave(state: GameState): SaveData {
 }
 
 const initialUi: UiState = {
-  screen: "title",
+  // A link to /#settings opens the server's settings page.
+  screen: typeof window !== "undefined" && window.location.hash === "#settings" ? "server" : "title",
   config: null,
   configError: null,
   toasts: [],

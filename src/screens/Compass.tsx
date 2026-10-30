@@ -3,7 +3,7 @@ import { SKILL_IDS, SKILLS, skillLevelName } from "../../shared/skills.ts";
 import { SkillRadar } from "../components/ui.tsx";
 import { canRecord } from "../lib/recorder.ts";
 import { canListen, canSpeak } from "../lib/speech.ts";
-import { setFocusSkill, updateSettings } from "../state/actions.ts";
+import { go, setFocusSkill, updateSettings } from "../state/actions.ts";
 import { store, useGame } from "../state/store.ts";
 import { LANGS, LANG_NAMES, lang, levelName, plural, rankName, skillText, t, type Lang } from "../i18n/index.ts";
 
@@ -220,6 +220,16 @@ export function SettingsScreen() {
           {t("settings.aboutText")}
         </p>
       </section>
+
+      {config.settingsPage ? (
+        <section className="card">
+          <h2>{t("settings.server")}</h2>
+          <p className="small">{t("settings.serverText")}</p>
+          <button type="button" className="btn" onClick={() => go("server")} data-testid="open-server-settings">
+            ⚙️ {t("settings.openServer")}
+          </button>
+        </section>
+      ) : null}
 
       <section className="card">
         <h2>{t("settings.data")}</h2>

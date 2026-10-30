@@ -209,9 +209,9 @@ function Composer({ encounter }: { encounter: EncounterState }) {
   const [draft, setDraft] = useState("");
   const [listening, setListening] = useState<null | (() => void)>(null);
   // Voice mode through the server's voice model: record, then the model hears what was said and how.
-  const voice = useVoiceInput(`The learner is talking with ${encounter.persona.name} (${encounter.persona.role}) at ${encounter.persona.placeName}.`, (transcript) => {
+  const voice = useVoiceInput(`The learner is talking with ${encounter.persona.name} (${encounter.persona.role}) at ${encounter.persona.placeName}.`, (transcript, final) => {
     setDraft(transcript);
-    inputRef.current?.focus();
+    if (final) inputRef.current?.focus();
   });
   // Hints already read: a tip folds away once you act on it (or close it).
   const [dismissedHints, setDismissedHints] = useState(encounter.hints.length);
@@ -222,7 +222,7 @@ function Composer({ encounter }: { encounter: EncounterState }) {
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
     const text = draft.trim();
-    if (!text || encounter.awaiting) return;
+    if (!text || encounter.awaiting || voice.hearing) return;
     listening?.();
     const { delivery, spoken } = voice;
     setDraft("");
@@ -282,6 +282,7 @@ function Composer({ encounter }: { encounter: EncounterState }) {
           aria-label={t("composer.label", { name: firstName ?? "" })}
           enterKeyHint="send"
           disabled={encounter.awaiting}
+          readOnly={voice.hearing}
           autoFocus
         />
         {settings.voiceInput && voice.available ? (
@@ -291,7 +292,7 @@ function Composer({ encounter }: { encounter: EncounterState }) {
             🎙️
           </button>
         ) : null}
-        <button type="submit" className="btn btn--primary" disabled={!draft.trim() || encounter.awaiting} data-testid="send-btn">
+        <button type="submit" className="btn btn--primary" disabled={!draft.trim() || encounter.awaiting || voice.hearing} data-testid="send-btn">
           {t("composer.send")}
         </button>
       </div>

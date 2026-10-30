@@ -1,13 +1,20 @@
-// Classroom mode: classes, their assignments and students' results, kept in one JSON file under
-// DATA_DIR. Small by design (a class is a few dozen students), so the whole store lives in memory
-// and is written atomically (temp file, then rename) shortly after each change. A teacher's key is
-// shown once and kept only as a hash; students get an unguessable id. Results are summaries
-// (scores, the mentor's headline): conversations never leave the student's browser.
+// Classroom mode: classes, their assignments and students' results. One server instance keeps
+// them in a JSON file under DATA_DIR: the whole store lives in memory and is written atomically
+// (temp file, then rename) shortly after each change. With DATABASE_URL they live in a database
+// instead: Postgres, shared by several instances, where each change locks its class's row, or a
+// SQLite file, where each change runs in a write transaction. Either way, instances can't
+// overwrite each other. A teacher's key is shown once and kept only as a hash; students get an
+// unguessable id. Results are summaries (scores, the mentor's headline): conversations never
+// leave the student's browser.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
+import type pg from "pg";
+import type { StoreKind } from "../../shared/settings.ts";
 import { SKILL_IDS, type SkillId } from "../../shared/skills.ts";
 import type { Assignment, AssignmentInput, ClassDashboard, ClassResult, ClassResultInput, StudentClassView } from "../../shared/classroom.ts";
+import type { Database } from "../db.ts";
 import { HttpError } from "../util/errors.ts";
 
 interface Student {
@@ -21,7 +28,7 @@ interface StoredResult extends ClassResult {
   studentId: string;
 }
 
-interface ClassRecord {
+export interface ClassRecord {
   code: string;
   name: string;
   teacherName: string;
@@ -32,6 +39,18 @@ interface ClassRecord {
   results: StoredResult[];
 }
 
+/** Where classes are kept. `update` changes one class atomically and returns what `change` does. */
+export interface ClassBackend {
+  readonly kind: StoreKind;
+  count(): Promise<number>;
+  get(code: string): Promise<ClassRecord | undefined>;
+  /** False when the code is taken. */
+  insert(record: ClassRecord): Promise<boolean>;
+  update<T>(code: string, change: (record: ClassRecord) => T): Promise<T>;
+  flush(): Promise<void>;
+  close(): Promise<void>;
+}
+
 export const CLASS_LIMITS = { classes: 2000, students: 200, assignments: 50, results: 5000 };
 
 /** Codes avoid look-alike characters (0/O, 1/I/L), so they survive being read aloud or written on a board. */
@@ -40,6 +59,7 @@ const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const hash = (key: string) => createHash("sha256").update(key).digest("hex");
 const randomCode = () => Array.from(randomBytes(6), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
 const randomToken = (bytes: number) => randomBytes(bytes).toString("base64url");
+const normalizeCode = (code: string) => code.trim().toUpperCase();
 
 function sameHash(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -47,7 +67,15 @@ function sameHash(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-export class ClassroomStore {
+const notFound = () => new HttpError(404, "class_not_found", "There's no class with that code. Check it with your teacher.");
+
+function checkTeacher(record: ClassRecord, key: string | undefined): void {
+  if (!key || !sameHash(hash(key), record.teacherKeyHash)) throw new HttpError(403, "not_teacher", "Only the teacher who created this class can see that.");
+}
+
+/** All classes in memory, written to `dir/classrooms.json` shortly after each change. */
+export class FileClassBackend implements ClassBackend {
+  readonly kind = "file" as const;
   readonly #file: string;
   readonly #classes = new Map<string, ClassRecord>();
   #saving: Promise<void> = Promise.resolve();
@@ -57,17 +85,16 @@ export class ClassroomStore {
     this.#file = file;
   }
 
-  /** Load the store from `dir` (created if missing). */
-  static async open(dir: string): Promise<ClassroomStore> {
+  static async open(dir: string): Promise<FileClassBackend> {
     await mkdir(dir, { recursive: true });
-    const store = new ClassroomStore(join(dir, "classrooms.json"));
+    const backend = new FileClassBackend(join(dir, "classrooms.json"));
     try {
-      const data = JSON.parse(await readFile(store.#file, "utf8")) as { classes?: ClassRecord[] };
-      for (const record of data.classes ?? []) store.#classes.set(record.code, record);
+      const data = JSON.parse(await readFile(backend.#file, "utf8")) as { classes?: ClassRecord[] };
+      for (const record of data.classes ?? []) backend.#classes.set(record.code, record);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    return store;
+    return backend;
   }
 
   /** Write soon after a change; several changes in quick succession become one write. */
@@ -79,7 +106,37 @@ export class ClassroomStore {
     }, 200);
   }
 
+  async count(): Promise<number> {
+    return this.#classes.size;
+  }
+
+  async get(code: string): Promise<ClassRecord | undefined> {
+    return this.#classes.get(code);
+  }
+
+  async insert(record: ClassRecord): Promise<boolean> {
+    if (this.#classes.has(record.code)) return false;
+    this.#classes.set(record.code, record);
+    this.#changed();
+    return true;
+  }
+
+  async update<T>(code: string, change: (record: ClassRecord) => T): Promise<T> {
+    const record = this.#classes.get(code);
+    if (!record) throw notFound();
+    // Change a copy, so a refused change leaves the class as it was.
+    const copy = structuredClone(record);
+    const result = change(copy);
+    this.#classes.set(code, copy);
+    this.#changed();
+    return result;
+  }
+
   async flush(): Promise<void> {
+    if (this.#timer) {
+      clearTimeout(this.#timer);
+      this.#timer = null;
+    }
     const data = JSON.stringify({ classes: [...this.#classes.values()] });
     this.#saving = this.#saving.then(async () => {
       const tmp = `${this.#file}.${process.pid}.tmp`;
@@ -89,74 +146,223 @@ export class ClassroomStore {
     return this.#saving;
   }
 
-  #get(code: string): ClassRecord {
-    const record = this.#classes.get(code.trim().toUpperCase());
-    if (!record) throw new HttpError(404, "class_not_found", "There's no class with that code. Check it with your teacher.");
+  close(): Promise<void> {
+    return this.flush();
+  }
+}
+
+/** One row per class in Postgres, locked while it changes. */
+export class PostgresClassBackend implements ClassBackend {
+  readonly kind = "postgres" as const;
+  readonly #pool: pg.Pool;
+
+  private constructor(pool: pg.Pool) {
+    this.#pool = pool;
+  }
+
+  static async open(pool: pg.Pool): Promise<PostgresClassBackend> {
+    await pool.query(`CREATE TABLE IF NOT EXISTS common_ground_classes (
+      code text PRIMARY KEY,
+      data jsonb NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`);
+    return new PostgresClassBackend(pool);
+  }
+
+  async count(): Promise<number> {
+    const { rows } = await this.#pool.query<{ n: string }>("SELECT count(*) AS n FROM common_ground_classes");
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  async get(code: string): Promise<ClassRecord | undefined> {
+    const { rows } = await this.#pool.query<{ data: ClassRecord }>("SELECT data FROM common_ground_classes WHERE code = $1", [code]);
+    return rows[0]?.data;
+  }
+
+  async insert(record: ClassRecord): Promise<boolean> {
+    const { rowCount } = await this.#pool.query("INSERT INTO common_ground_classes (code, data) VALUES ($1, $2) ON CONFLICT (code) DO NOTHING", [record.code, JSON.stringify(record)]);
+    return Boolean(rowCount);
+  }
+
+  async update<T>(code: string, change: (record: ClassRecord) => T): Promise<T> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query<{ data: ClassRecord }>("SELECT data FROM common_ground_classes WHERE code = $1 FOR UPDATE", [code]);
+      if (!rows[0]) throw notFound();
+      const record = rows[0].data;
+      const result = change(record);
+      await client.query("UPDATE common_ground_classes SET data = $2, updated_at = now() WHERE code = $1", [code, JSON.stringify(record)]);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async flush(): Promise<void> {}
+
+  async close(): Promise<void> {}
+}
+
+/** One row per class in a SQLite file; each change holds the write lock from read to write. */
+export class SqliteClassBackend implements ClassBackend {
+  readonly kind = "sqlite" as const;
+  readonly #db: DatabaseSync;
+  readonly #count: StatementSync;
+  readonly #get: StatementSync;
+  readonly #insert: StatementSync;
+  readonly #update: StatementSync;
+
+  private constructor(db: DatabaseSync) {
+    this.#db = db;
+    this.#count = db.prepare("SELECT count(*) AS n FROM common_ground_classes");
+    this.#get = db.prepare("SELECT data FROM common_ground_classes WHERE code = ?");
+    this.#insert = db.prepare("INSERT INTO common_ground_classes (code, data, updated_at) VALUES (?, ?, ?) ON CONFLICT (code) DO NOTHING");
+    this.#update = db.prepare("UPDATE common_ground_classes SET data = ?, updated_at = ? WHERE code = ?");
+  }
+
+  static async open(db: DatabaseSync): Promise<SqliteClassBackend> {
+    db.exec(`CREATE TABLE IF NOT EXISTS common_ground_classes (
+      code TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`);
+    return new SqliteClassBackend(db);
+  }
+
+  async count(): Promise<number> {
+    return Number((this.#count.get() as { n: number }).n);
+  }
+
+  async get(code: string): Promise<ClassRecord | undefined> {
+    const row = this.#get.get(code) as { data: string } | undefined;
+    return row ? (JSON.parse(row.data) as ClassRecord) : undefined;
+  }
+
+  async insert(record: ClassRecord): Promise<boolean> {
+    return Number(this.#insert.run(record.code, JSON.stringify(record), Date.now()).changes) > 0;
+  }
+
+  async update<T>(code: string, change: (record: ClassRecord) => T): Promise<T> {
+    // IMMEDIATE takes the write lock before reading, so no other process changes the class in
+    // between. Nothing here awaits, so this process can't interleave either.
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.#get.get(code) as { data: string } | undefined;
+      if (!row) throw notFound();
+      const record = JSON.parse(row.data) as ClassRecord;
+      const result = change(record);
+      this.#update.run(JSON.stringify(record), Date.now(), code);
+      this.#db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (this.#db.isTransaction) this.#db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async flush(): Promise<void> {}
+
+  async close(): Promise<void> {}
+}
+
+export class ClassroomStore {
+  readonly #backend: ClassBackend;
+
+  constructor(backend: ClassBackend) {
+    this.#backend = backend;
+  }
+
+  /** Classes in a JSON file under `dir` (created if missing): one server instance. */
+  static async open(dir: string): Promise<ClassroomStore> {
+    return new ClassroomStore(await FileClassBackend.open(dir));
+  }
+
+  /** Classes in the database DATABASE_URL names, shared by every instance using it. */
+  static async openShared(db: Database): Promise<ClassroomStore> {
+    return new ClassroomStore(await (db.kind === "postgres" ? PostgresClassBackend.open(db.pool) : SqliteClassBackend.open(db.sqlite)));
+  }
+
+  get kind(): ClassBackend["kind"] {
+    return this.#backend.kind;
+  }
+
+  flush(): Promise<void> {
+    return this.#backend.flush();
+  }
+
+  close(): Promise<void> {
+    return this.#backend.close();
+  }
+
+  async #get(code: string): Promise<ClassRecord> {
+    const record = await this.#backend.get(normalizeCode(code));
+    if (!record) throw notFound();
     return record;
   }
 
-  #teacher(code: string, key: string | undefined): ClassRecord {
-    const record = this.#get(code);
-    if (!key || !sameHash(hash(key), record.teacherKeyHash)) throw new HttpError(403, "not_teacher", "Only the teacher who created this class can see that.");
-    return record;
-  }
-
-  create(name: string, teacherName: string): { code: string; teacherKey: string } {
-    if (this.#classes.size >= CLASS_LIMITS.classes) throw new HttpError(507, "classes_full", "This server can't hold more classes.");
-    let code = randomCode();
-    while (this.#classes.has(code)) code = randomCode();
+  async create(name: string, teacherName: string): Promise<{ code: string; teacherKey: string }> {
+    if ((await this.#backend.count()) >= CLASS_LIMITS.classes) throw new HttpError(507, "classes_full", "This server can't hold more classes.");
     const teacherKey = randomToken(24);
-    this.#classes.set(code, { code, name, teacherName, teacherKeyHash: hash(teacherKey), createdAt: Date.now(), assignments: [], students: [], results: [] });
-    this.#changed();
-    return { code, teacherKey };
+    for (;;) {
+      const code = randomCode();
+      const record: ClassRecord = { code, name, teacherName, teacherKeyHash: hash(teacherKey), createdAt: Date.now(), assignments: [], students: [], results: [] };
+      if (await this.#backend.insert(record)) return { code, teacherKey };
+    }
   }
 
-  view(code: string): StudentClassView {
-    const record = this.#get(code);
-    return { code: record.code, name: record.name, teacherName: record.teacherName, assignments: record.assignments };
+  async view(code: string): Promise<StudentClassView> {
+    return studentView(await this.#get(code));
   }
 
-  join(code: string, name: string): { studentId: string; view: StudentClassView } {
-    const record = this.#get(code);
-    if (record.students.length >= CLASS_LIMITS.students) throw new HttpError(409, "class_full", "This class is full.");
-    const student = { id: randomToken(18), name, joinedAt: Date.now() };
-    record.students.push(student);
-    this.#changed();
-    return { studentId: student.id, view: this.view(code) };
+  join(code: string, name: string): Promise<{ studentId: string; view: StudentClassView }> {
+    return this.#backend.update(normalizeCode(code), (record) => {
+      if (record.students.length >= CLASS_LIMITS.students) throw new HttpError(409, "class_full", "This class is full.");
+      const student = { id: randomToken(18), name, joinedAt: Date.now() };
+      record.students.push(student);
+      return { studentId: student.id, view: studentView(record) };
+    });
   }
 
-  addAssignment(code: string, key: string | undefined, input: AssignmentInput): Assignment {
-    const record = this.#teacher(code, key);
-    if (record.assignments.length >= CLASS_LIMITS.assignments) throw new HttpError(409, "assignments_full", "Remove an old assignment first.");
-    const assignment: Assignment = { id: `as_${randomToken(6)}`, createdAt: Date.now(), ...input };
-    record.assignments.push(assignment);
-    this.#changed();
-    return assignment;
+  addAssignment(code: string, key: string | undefined, input: AssignmentInput): Promise<Assignment> {
+    return this.#backend.update(normalizeCode(code), (record) => {
+      checkTeacher(record, key);
+      if (record.assignments.length >= CLASS_LIMITS.assignments) throw new HttpError(409, "assignments_full", "Remove an old assignment first.");
+      const assignment: Assignment = { id: `as_${randomToken(6)}`, createdAt: Date.now(), ...input };
+      record.assignments.push(assignment);
+      return assignment;
+    });
   }
 
-  removeAssignment(code: string, key: string | undefined, id: string): void {
-    const record = this.#teacher(code, key);
-    record.assignments = record.assignments.filter((a) => a.id !== id);
-    record.results = record.results.filter((r) => r.assignmentId !== id);
-    this.#changed();
+  removeAssignment(code: string, key: string | undefined, id: string): Promise<void> {
+    return this.#backend.update(normalizeCode(code), (record) => {
+      checkTeacher(record, key);
+      record.assignments = record.assignments.filter((a) => a.id !== id);
+      record.results = record.results.filter((r) => r.assignmentId !== id);
+    });
   }
 
   /** A student's result for an assignment; a later attempt replaces an earlier one. */
-  submit(code: string, input: ClassResultInput): void {
-    const record = this.#get(code);
-    const student = record.students.find((s) => s.id === input.studentId);
-    if (!student) throw new HttpError(403, "not_in_class", "Join the class again to share your results.");
-    if (!record.assignments.some((a) => a.id === input.assignmentId)) throw new HttpError(404, "assignment_gone", "Your teacher removed that assignment.");
-    record.results = record.results.filter((r) => !(r.studentId === student.id && r.assignmentId === input.assignmentId));
-    if (record.results.length >= CLASS_LIMITS.results) record.results.shift();
-    const { studentId: _id, ...summary } = input;
-    record.results.push({ ...summary, studentId: student.id, studentName: student.name, at: Date.now() });
-    this.#changed();
+  submit(code: string, input: ClassResultInput): Promise<void> {
+    return this.#backend.update(normalizeCode(code), (record) => {
+      const student = record.students.find((s) => s.id === input.studentId);
+      if (!student) throw new HttpError(403, "not_in_class", "Join the class again to share your results.");
+      if (!record.assignments.some((a) => a.id === input.assignmentId)) throw new HttpError(404, "assignment_gone", "Your teacher removed that assignment.");
+      record.results = record.results.filter((r) => !(r.studentId === student.id && r.assignmentId === input.assignmentId));
+      if (record.results.length >= CLASS_LIMITS.results) record.results.shift();
+      const { studentId: _id, ...summary } = input;
+      record.results.push({ ...summary, studentId: student.id, studentName: student.name, at: Date.now() });
+    });
   }
 
   /** The class debrief view: per assignment, who finished and how the class did. */
-  dashboard(code: string, key: string | undefined): ClassDashboard {
-    const record = this.#teacher(code, key);
+  async dashboard(code: string, key: string | undefined): Promise<ClassDashboard> {
+    const record = await this.#get(code);
+    checkTeacher(record, key);
     return {
       code: record.code,
       name: record.name,
@@ -183,4 +389,8 @@ export class ClassroomStore {
       }),
     };
   }
+}
+
+function studentView(record: ClassRecord): StudentClassView {
+  return { code: record.code, name: record.name, teacherName: record.teacherName, assignments: record.assignments };
 }

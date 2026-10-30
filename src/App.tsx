@@ -12,7 +12,8 @@ import { JournalScreen } from "./screens/Journal.tsx";
 import { ClassroomScreen } from "./screens/Classroom.tsx";
 import { MediationScreen } from "./screens/Mediation.tsx";
 import { ArrivingScreen, ExpeditionScreen, ScoutingOverlay, WorldScreen } from "./screens/World.tsx";
-import { currentExpedition, go, loadConfig } from "./state/actions.ts";
+import { ServerSettingsScreen } from "./screens/ServerSettings.tsx";
+import { currentExpedition, go, loadConfig, refreshConfig } from "./state/actions.ts";
 import { useGame } from "./state/store.ts";
 import type { Screen } from "./state/types.ts";
 import { detectLang, rankName, setLang, t, type MessageKey } from "./i18n/index.ts";
@@ -30,11 +31,13 @@ export function useDark(theme: "system" | "light" | "dark"): boolean {
 }
 
 /** The one long-lived map, kept mounted under the world and expedition screens. */
-function MapStage({ config, visible, dark }: { config: AppConfig; visible: boolean; dark: boolean }) {
+function MapStage({ config: fullConfig, visible, dark }: { config: AppConfig; visible: boolean; dark: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const controller = useMap();
   const [error, setError] = useState<string | null>(null);
   const initialDark = useRef(dark);
+  // Rebuilt only when a map setting changes, not whenever the server's settings do.
+  const config = useMemo(() => fullConfig, [fullConfig.mapsMode, fullConfig.googleMapsApiKey, fullConfig.googleMapId]);
 
   useEffect(() => {
     let disposed = false;
@@ -44,6 +47,7 @@ function MapStage({ config, visible, dark }: { config: AppConfig; visible: boole
       controller.detach();
       setError(t("map.keyRejected"));
     };
+    setError(null);
     createWorldMap(ref.current!, config, initialDark.current)
       .then((created) => {
         if (disposed) return created.destroy();
@@ -100,7 +104,8 @@ function TopBar() {
   const game = useGame();
   const rank = rankFor(game.progress.xp);
   const progress = rank.next ? (game.progress.xp - rank.floor) / (rank.next - rank.floor) : 1;
-  const active = game.ui.screen === "expedition" || game.ui.screen === "encounter" || game.ui.screen === "mediation" || game.ui.screen === "debrief" ? "world" : game.ui.screen;
+  const active =
+    game.ui.screen === "expedition" || game.ui.screen === "encounter" || game.ui.screen === "mediation" || game.ui.screen === "debrief" ? "world" : game.ui.screen === "server" ? "settings" : game.ui.screen;
   const due = game.journal.insights.filter((j) => j.recall.dueAt <= Date.now()).length;
   return (
     <header className="topbar">
@@ -149,6 +154,17 @@ export function App() {
 
   useEffect(() => {
     void loadConfig();
+    // Settings change on the server without a restart: check for a new configuration now and then,
+    // and whenever the player comes back to the tab.
+    const timer = setInterval(() => void refreshConfig(), 60_000);
+    const onVisible = () => document.visibilityState === "visible" && void refreshConfig();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
   }, []);
 
   useEffect(() => {
@@ -172,6 +188,18 @@ export function App() {
         ) : (
           <p>{t("app.loading")}</p>
         )}
+      </div>
+    );
+  }
+  // The server's settings stay reachable without the players' access code (they have their own key).
+  if (screen === "server") {
+    return (
+      <div className="app" data-screen={screen}>
+        {game.player ? <TopBar /> : null}
+        <main className="stage">
+          <ServerSettingsScreen />
+        </main>
+        <Toasts toasts={game.ui.toasts} />
       </div>
     );
   }

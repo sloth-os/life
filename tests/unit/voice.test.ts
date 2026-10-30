@@ -146,3 +146,55 @@ describe("ImageGateway", () => {
     expect(prompt).toContain("No text");
   });
 });
+
+describe("voice: the words first, and a speech model for the locals", () => {
+  it("passes on the transcript as the model writes it, before the notes on delivery", async () => {
+    const answer = JSON.stringify({ transcript: "Hello! What do you enjoy most?", tone: "warm", pace: "natural", clarity: 90, note: "Friendly." });
+    const pieces = answer.match(/.{1,5}/g)!.map((content) => ({ content }));
+    const { voice, logs } = voiceSetup(() => sse(pieces));
+    const seen: string[] = [];
+    const heard = await voice.listen(tone, "Greeting a local.", undefined, (words) => seen.push(words));
+    expect(heard.transcript).toBe("Hello! What do you enjoy most?");
+    expect(seen.length).toBeGreaterThan(3);
+    expect(seen.at(-1)).toBe(heard.transcript);
+    expect(seen.every((w) => heard.transcript.startsWith(w))).toBe(true);
+    expect(logs.join("\n")).toMatch(/first-words=\d+ms/);
+  });
+
+  function ttsSetup(respond: (url: string, body: Record<string, unknown>) => Response, model?: string) {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+      const call = { url: String(input), body: JSON.parse(String(init?.body)) as Record<string, unknown> };
+      calls.push(call);
+      return respond(call.url, call.body);
+    };
+    const client = new OpenAI({ apiKey: "k", baseURL: "https://speech.test/v1", fetch: fetchImpl as typeof fetch, maxRetries: 0 });
+    return { voice: new VoiceService({ client, model, ttsModel: "gpt-4o-mini-tts", voices: ["coral", "ash"] }), calls };
+  }
+
+  it("speaks through the speech endpoint when a speech model is set, even beside a model that can't", async () => {
+    const wav = wavFromPcm16(Buffer.alloc(24_000 * 2), 24_000);
+    const { voice, calls } = ttsSetup(() => new Response(new Uint8Array(wav), { headers: { "content-type": "audio/wav" } }), "qwen3.8-omni-flash");
+    expect(voice.canSpeak).toBe(true);
+    expect(voice.canListen).toBe(true);
+    const spoken = await voice.speak("Karibu! Welcome to the market.", "coral");
+    expect(spoken).toMatchObject({ mimeType: "audio/wav", durationMs: 1000 });
+    expect(calls[0]!.url).toBe("https://speech.test/v1/audio/speech");
+    expect(calls[0]!.body).toMatchObject({ model: "gpt-4o-mini-tts", voice: "coral", input: "Karibu! Welcome to the market.", response_format: "wav" });
+  });
+
+  it("asks for MP3 when the speech endpoint turns WAV down, and gives up on a model that isn't there", async () => {
+    const mp3 = Buffer.from("ID3fake-mp3-bytes");
+    const { voice, calls } = ttsSetup((_url, body) => (body.response_format === "wav" ? json({ error: { message: "response_format wav is not supported" } }, 400) : new Response(new Uint8Array(mp3), { headers: { "content-type": "audio/mpeg" } })));
+    const spoken = await voice.speak("Habari", "ash");
+    expect(spoken.mimeType).toBe("audio/mpeg");
+    expect(calls.map((c) => c.body.response_format)).toEqual(["wav", "mp3"]);
+    // A speech-only voice can't hear.
+    expect(voice.canListen).toBe(false);
+    await expect(voice.listen(tone, "x")).rejects.toMatchObject({ code: "voice_off" });
+
+    const missing = ttsSetup(() => json({ error: { message: "The model `gpt-4o-mini-tts` does not exist" } }, 404));
+    await expect(missing.voice.speak("Hi", "coral")).rejects.toMatchObject({ code: "voice_cannot_speak" });
+    expect(missing.voice.canSpeak).toBe(false);
+  });
+});

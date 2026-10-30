@@ -60,7 +60,7 @@ export interface GroundingDeps {
 const MAX_ARTICLES = 8;
 
 export class GroundingService {
-  readonly #deps: GroundingDeps;
+  #deps: GroundingDeps;
   /** Raw grounding is session-scoped: kept in memory briefly, never persisted. */
   readonly #packs = new TtlCache<GroundingPack>(2 * 60 * 60 * 1000, 200);
   // Open data is cached to spare the free services (and stay under their rate limits).
@@ -70,6 +70,15 @@ export class GroundingService {
 
   constructor(deps: GroundingDeps) {
     this.#deps = deps;
+  }
+
+  /** New settings (hot reload): the caches stay, so expeditions in progress keep their grounding. */
+  reconfigure(deps: Pick<GroundingDeps, "config" | "mapsTools">): void {
+    this.#deps = { ...this.#deps, ...deps };
+  }
+
+  get mapsTools(): MapsAgentTools | undefined {
+    return this.#deps.mapsTools;
   }
 
   get placeGrounding(): "google" | "wikipedia" {
@@ -150,9 +159,11 @@ export class GroundingService {
     const localityPromise: Promise<Locality> =
       postcard || google ? Promise.resolve(knownLocality) : settle(nominatimReverse(center.lat, center.lng, { ...http, cache: this.#geocodeCache }), knownLocality, "reverse geocoding", (m) => this.#log(m));
 
+    // The briefing waits for grounding, and weather is a detail: Open-Meteo answers in well under a
+    // second or not at all (in CI it timed out in 7 of 26 arrivals, each holding the briefing 8 s).
     const conditionsPromise: Promise<LocalConditions> = coordsAreGoogleContent
       ? Promise.resolve({})
-      : settle(openMeteoNow(center.lat, center.lng, { ...http, cache: this.#weatherCache }), {}, "Open-Meteo", (m) => this.#log(m));
+      : settle(openMeteoNow(center.lat, center.lng, { ...http, cache: this.#weatherCache, timeoutMs: 3_000 }), {}, "Open-Meteo", (m) => this.#log(m));
 
     const googleWeatherPromise = google && mapsTools ? settle(mapsTools.lookupWeather(center).then((w) => w as typeof w | null), null, "lookup_weather", (m) => this.#log(m)) : Promise.resolve(null);
 
@@ -220,13 +231,15 @@ export class GroundingService {
       }
     }
 
-    // WX: weather — Google's in Google mode, Open-Meteo otherwise.
+    // WX: weather — Google's in Google mode, Open-Meteo otherwise, and where Google has none: its
+    // weather doesn't cover every place (it answered "not supported" for Kyoto). Open-Meteo is
+    // never asked about coordinates from a Google search, so those go without.
     let weather: Weather | undefined;
     let weatherDetails: string | undefined;
     if (googleWeather?.summary) {
       weather = { summary: googleWeather.summary, tempC: googleWeather.tempC, condition: googleWeather.condition, isDay: googleWeather.isDay, provider: "google", attribution: "Weather: Google Maps" };
       weatherDetails = googleWeather.details;
-    } else if (!google && conditions.weather) {
+    } else if (conditions.weather) {
       weather = conditions.weather;
     }
     if (weather) sources.push({ id: "WX", kind: "weather", title: `Current weather: ${weather.summary}`, attribution: weather.attribution });

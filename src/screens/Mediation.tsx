@@ -111,16 +111,16 @@ function Composer({ mediation }: { mediation: MediationState }) {
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [a, b] = mediation.scene.parties;
-  const voice = useVoiceInput(`The learner is mediating between ${a.name} and ${b.name} about ${mediation.scene.topic}.`, (transcript) => {
+  const voice = useVoiceInput(`The learner is mediating between ${a.name} and ${b.name} about ${mediation.scene.topic}.`, (transcript, final) => {
     setDraft(transcript);
-    inputRef.current?.focus();
+    if (final) inputRef.current?.focus();
   });
   const turns = mediation.transcript.filter((e) => e.speaker === "player").length;
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
     const text = draft.trim();
-    if (!text || mediation.awaiting) return;
+    if (!text || mediation.awaiting || voice.hearing) return;
     const { delivery, spoken } = voice;
     setDraft("");
     voice.setDelivery(null);
@@ -156,10 +156,11 @@ function Composer({ mediation }: { mediation: MediationState }) {
           aria-label={t("composer.label", { name: t("mediation.pair", { a: first(a.name), b: first(b.name) }) })}
           enterKeyHint="send"
           disabled={mediation.awaiting}
+          readOnly={voice.hearing}
           autoFocus
         />
         {settings.voiceInput && voice.available ? <MicButton input={voice} disabled={mediation.awaiting} /> : null}
-        <button type="submit" className="btn btn--primary" disabled={!draft.trim() || mediation.awaiting} data-testid="send-btn">
+        <button type="submit" className="btn btn--primary" disabled={!draft.trim() || mediation.awaiting || voice.hearing} data-testid="send-btn">
           {t("composer.send")}
         </button>
       </div>

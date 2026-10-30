@@ -33,6 +33,21 @@ jobs:
   unit:
     name: Unit & integration tests
     runs-on: ubuntu-24.04
+    # The shared store (classes and settings across instances) is tested against a real Postgres.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgres://postgres:test@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -115,9 +130,13 @@ jobs:
     outputs:
       configured: ${{ steps.check.outputs.configured }}
       images: ${{ steps.check.outputs.images }}
+      claude: ${{ steps.check.outputs.claude }}
     steps:
       - id: check
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY || secrets.GOOGLE_MAPS_API_KEY }}
+          VOICE_TTS_MODEL: ${{ vars.VOICE_TTS_MODEL }}
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           GOOGLE_MAPS_MAP_ID: ${{ vars.GOOGLE_MAPS_MAP_ID }}
           OMNI_API_FORMAT: ${{ vars.OMNI_API_FORMAT }}
@@ -145,6 +164,15 @@ jobs:
             [ -n "${!v}" ] || images=false
           done
           echo "images=$images" >> "$GITHUB_OUTPUT"
+          # Optional extras, each exercised live once it is set:
+          #   GOOGLE_MAPS_SERVER_KEY (secret): Maps agent tools and walking routes in the real suite.
+          #     Without it CI uses GOOGLE_MAPS_API_KEY, which works while that key has no referrer
+          #     restriction (a production server should have a key of its own);
+          #   VOICE_TTS_MODEL (variable): a speech model for the locals' voices;
+          #   ANTHROPIC_API_KEY (secret): the evaluation pass with Claude.
+          [ -n "$GOOGLE_MAPS_SERVER_KEY" ] || echo "::notice title=Maps agent tools not exercised::set the GOOGLE_MAPS_SERVER_KEY (or GOOGLE_MAPS_API_KEY) secret"
+          [ -n "$VOICE_TTS_MODEL" ] || echo "::notice title=Speaking locals not exercised::set the VOICE_TTS_MODEL variable"
+          if [ -n "$ANTHROPIC_API_KEY" ]; then echo "claude=true" >> "$GITHUB_OUTPUT"; else echo "claude=false" >> "$GITHUB_OUTPUT"; echo "::notice title=Claude evaluation skipped::set the ANTHROPIC_API_KEY secret"; fi
 
   e2e-real:
     name: End-to-end on real services
@@ -160,7 +188,11 @@ jobs:
       AI_MODEL: ${{ vars.OMNI_MODEL }}
       AI_BASE_URL: ${{ vars.OMNI_BASE_URL }}
       VOICE_MODEL: ${{ vars.OMNI_MODEL }}
+      # A speech model for the locals, when the organization has one (else the browser's voices).
+      VOICE_TTS_MODEL: ${{ vars.VOICE_TTS_MODEL }}
       GOOGLE_MAPS_MAP_ID: ${{ vars.GOOGLE_MAPS_MAP_ID }}
+      # Only used with a server key (GOOGLE_MAPS_SERVER_KEY, else GOOGLE_MAPS_API_KEY): walking times to each local.
+      MAPS_WALKING_ROUTES: "true"
       IMAGE_MODEL: ${{ vars.IMAGE_MODEL }}
       APP_USER_AGENT: CommonGround-CI/0.2 (+https://github.com/${{ github.repository }})
     steps:
@@ -193,13 +225,25 @@ jobs:
         timeout-minutes: 10
         env:
           AI_API_KEY: ${{ secrets.OMNI_API_KEY }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY || secrets.GOOGLE_MAPS_API_KEY }}
         run: node scripts/probe-ai.ts
       # The keys reach these steps only.
       - name: Real-services suite
         env:
           AI_API_KEY: ${{ secrets.OMNI_API_KEY }}
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY || secrets.GOOGLE_MAPS_API_KEY }}
         run: npm run test:e2e:real
+      # The evaluation plan (docs/DESIGN.md §7.5) on the same model. Its report goes to the job
+      # summary; model quality varies run to run, so a weak result is reported, not a failure.
+      - name: Evaluation (omni model)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          AI_API_KEY: ${{ secrets.OMNI_API_KEY }}
+        run: node scripts/eval.ts --places 4 --judge --out test-results/eval
       - name: Stop mm-gateway
         if: always() && needs.real-check.outputs.images == 'true'
         env:
@@ -215,8 +259,38 @@ jobs:
             playwright-report-real/
             test-results/real/
             test-results/probe/
+            test-results/eval/
           if-no-files-found: ignore
           retention-days: 7
+
+  # The evaluation pass with Claude, once the repository has an ANTHROPIC_API_KEY secret.
+  eval-claude:
+    name: Evaluation with Claude
+    runs-on: ubuntu-24.04
+    needs: real-check
+    if: needs.real-check.outputs.claude == 'true'
+    timeout-minutes: 30
+    env:
+      AI_PROVIDER: anthropic
+      APP_USER_AGENT: CommonGround-CI/0.3 (+https://github.com/${{ github.repository }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Evaluation (Claude)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node scripts/eval.ts --places 6 --judge --out test-results/eval-claude
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-claude
+          path: test-results/eval-claude/
+          if-no-files-found: ignore
+          retention-days: 30
 
   docker:
     name: Docker image (amd64 + arm64)

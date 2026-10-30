@@ -1,4 +1,4 @@
-// Interface localization. UI strings live in typed dictionaries (en is the source; es and zh must
+// Interface localization. UI strings live in typed dictionaries (en is the source; the others must
 // cover every key or the build fails). Game vocabulary (skills, moves, places…) is translated by id;
 // English comes straight from the shared definitions the AI prompts use, so the two never drift.
 import type { Postcard } from "../../shared/destinations.ts";
@@ -9,13 +9,16 @@ import type { SKILL_LEVELS, SkillId } from "../../shared/skills.ts";
 import type { EmotionId, LensId, MoveId, ScenarioId } from "../../shared/world.ts";
 import { en, type MessageKey } from "./en.ts";
 import { es } from "./es.ts";
+import { fr } from "./fr.ts";
+import { ja } from "./ja.ts";
+import { pt } from "./pt.ts";
 import { zh } from "./zh.ts";
 
 export { LANGS, type Lang } from "../../shared/languages.ts";
-import type { Lang } from "../../shared/languages.ts";
-export const LANG_NAMES: Record<Lang, string> = { en: "English", es: "Español", zh: "简体中文" };
+import { LANGS, type Lang } from "../../shared/languages.ts";
+export const LANG_NAMES: Record<Lang, string> = { en: "English", es: "Español", zh: "简体中文", fr: "Français", pt: "Português (Brasil)", ja: "日本語" };
 /** BCP 47 tags, for <html lang>, speech and dates. */
-export const LANG_TAGS: Record<Lang, string> = { en: "en", es: "es", zh: "zh-CN" };
+export const LANG_TAGS: Record<Lang, string> = { en: "en", es: "es", zh: "zh-CN", fr: "fr", pt: "pt-BR", ja: "ja" };
 
 export interface SkillText {
   name: string;
@@ -49,14 +52,15 @@ export interface Translation {
   domain: DomainText;
 }
 
-const TRANSLATIONS: Record<Lang, Translation> = { en: { ui: en, domain: englishDomain() }, es, zh };
+const TRANSLATIONS: Record<Lang, Translation> = { en: { ui: en, domain: englishDomain() }, es, zh, fr, pt, ja };
 
 let current: Lang = "en";
 
 /** The browser's language, if the game speaks it. */
 export function detectLang(): Lang {
   const tag = (typeof navigator === "undefined" ? "en" : navigator.language || "en").toLowerCase();
-  return tag.startsWith("zh") ? "zh" : tag.startsWith("es") ? "es" : "en";
+  const spoken = LANGS.find((l) => tag === l || tag.startsWith(`${l}-`));
+  return spoken ?? "en";
 }
 
 export function setLang(lang: Lang): void {
@@ -72,7 +76,7 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
   return params ? template.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match)) : template;
 }
 
-/** "one"/"other" plural pick for counts (Chinese has a single form, so both keys say the same). */
+/** "one"/"other" plural pick for counts (Chinese and Japanese have one form, so both keys say the same). */
 export function plural(count: number, one: MessageKey, other: MessageKey, params: Record<string, string | number> = {}): string {
   return t(count === 1 ? one : other, { count, ...params });
 }

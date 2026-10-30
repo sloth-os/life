@@ -86,6 +86,12 @@ export class ImageGateway {
     return { status: response.status, body: body as T };
   }
 
+  /** The image models the gateway offers this key: a cheap check that the URL and key work. */
+  async models(signal?: AbortSignal): Promise<string[]> {
+    const { body } = await this.#call<{ data?: { id: string }[] }>("/v1/models?modality=image", { signal });
+    return (body.data ?? []).map((m) => m.id);
+  }
+
   async render(prompt: string, signal?: AbortSignal): Promise<RenderedImage> {
     for (let attempt = 0; ; attempt++) {
       try {

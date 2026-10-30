@@ -54,11 +54,13 @@ export function WorldScreen() {
     }));
     for (const entry of game.atlas) {
       if (entry.destination.postcardId || entry.coordinatesExpired) continue;
+      // Coordinates from a Google search result are Google content: not on the open map.
+      if (config.mapsMode !== "google" && entry.destination.source === "search" && entry.destination.mapsUrl) continue;
       list.push({ id: `atlas:${entry.expeditionId}`, position: entry.destination, kind: "visited", label: entry.city ?? entry.destination.label, glyph: "✓", color: "var(--accent-2)" });
     }
     if (selected && !selected.postcardId) list.push({ id: "pin", position: selected, kind: "pin", label: selected.label, glyph: "📍", color: "var(--accent)", selected: true });
     return list;
-  }, [visited, game.atlas, selected, game.settings.language]);
+  }, [visited, game.atlas, selected, game.settings.language, config.mapsMode]);
 
   useEffect(() => {
     map.run((m) => {
@@ -227,8 +229,9 @@ export function ExpeditionScreen() {
   const expedition = currentExpedition(game);
   const [highlight, setHighlight] = useState<string | null>(null);
 
+  const otherMap = expedition?.mapsMode === "google" && game.ui.config?.mapsMode !== "google";
   useEffect(() => {
-    if (!expedition) return;
+    if (!expedition || otherMap) return;
     const markers: MapMarker[] = expedition.npcs.map((n) => {
       const met = game.people.find((p) => p.key === personKey(expedition.id, n.id));
       return {
@@ -250,15 +253,15 @@ export function ExpeditionScreen() {
         },
       });
     });
-  }, [map, expedition, game.people, highlight]);
+  }, [map, expedition, game.people, highlight, otherMap]);
 
   const fitted = useRef<string | null>(null);
   useEffect(() => {
-    if (!expedition || fitted.current === expedition.id) return;
+    if (!expedition || otherMap || fitted.current === expedition.id) return;
     fitted.current = expedition.id;
     const points = expedition.npcs.map((n) => n.location).filter((p): p is NonNullable<typeof p> => Boolean(p));
     map.run((m) => m.fitTo(points.length ? [...points, expedition.destination] : [expedition.destination], 16));
-  }, [map, expedition]);
+  }, [map, expedition, otherMap]);
 
   if (!expedition) {
     return (
@@ -266,6 +269,24 @@ export function ExpeditionScreen() {
         <aside className="side-panel">
           <div className="side-panel__scroll">
             <p>{t("expedition.none")}</p>
+            <button type="button" className="btn btn--primary" onClick={() => go("world")}>
+              {t("expedition.backToMap")}
+            </button>
+          </div>
+        </aside>
+      </div>
+    );
+  }
+
+  // Google Maps content never appears with the open map (Google Maps Platform terms §3.2.3(e)).
+  if (expedition.mapsMode === "google" && game.ui.config?.mapsMode !== "google") {
+    return (
+      <div className="map-screen">
+        <aside className="side-panel">
+          <div className="side-panel__scroll">
+            <p className="notice" role="status" data-testid="other-map">
+              {t("expedition.otherMap")}
+            </p>
             <button type="button" className="btn btn--primary" onClick={() => go("world")}>
               {t("expedition.backToMap")}
             </button>

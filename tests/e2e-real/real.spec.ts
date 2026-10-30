@@ -47,6 +47,13 @@ test("a real expedition: Google Maps, live grounding, a real model, voice and a 
   await expect(page.locator(".local-card:not(.local-card--pending)").first(), "the model composes the locals").toBeVisible({ timeout: COMPOSE_TIMEOUT });
   await snap("expedition");
 
+  if (config.placeGrounding === "google") {
+    // Maps agent tools grounded the trip (GOOGLE_MAPS_SERVER_KEY): Google places carry their links…
+    await expect(page.locator('a[href*="google.com/maps"]').first(), "grounded places link to Google Maps").toBeAttached();
+    // …and, with walking routes on, each local says how far a walk it is.
+    if (process.env.MAPS_WALKING_ROUTES === "true") await expect(page.getByText(/min walk from where you arrive/).first(), "walking times from compute_routes").toBeVisible();
+  }
+
   if (config.features.voice) {
     // Pronunciation practice on the greeting: the microphone plays a recorded line, so the score
     // itself doesn't matter here, only that the voice model heard it and answered.
@@ -68,6 +75,11 @@ test("a real expedition: Google Maps, live grounding, a real model, voice and a 
     // The opening line is voiced by the model, or the browser takes over (501: a model that only listens).
     const response = await opening;
     expect([200, 501], `voice for the opening line answered ${response.status()}`).toContain(response.status());
+    // With a speech model configured (VOICE_TTS_MODEL), the locals must really speak.
+    if (process.env.VOICE_TTS_MODEL) {
+      expect(response.status(), "the speech model voiced the opening line").toBe(200);
+      expect((await response.body()).length, "the line came back as audio").toBeGreaterThan(1000);
+    }
   }
   await snap("encounter");
 
