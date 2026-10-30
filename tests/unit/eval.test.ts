@@ -13,6 +13,9 @@ describe("evaluation", () => {
     expect(flags.map((f) => f.term).sort()).toEqual(["colourful", "exotic", "timeless", "untouched", "wise elder"]);
     expect(flags.every((f) => f.hard)).toBe(true);
     expect(scanTropes("She works in exoticfoods logistics; the tribe of fans is loud.", "test")).toEqual([expect.objectContaining({ term: "tribe", hard: false })]);
+    // Quoted, a term is talked about rather than used.
+    expect(scanTropes("She resists questions about 'exotic' tastes and “timeless” postcards, and «primitive» labels.", "test")).toEqual([]);
+    expect(scanTropes("An 'exotic market.", "test")).toEqual([expect.objectContaining({ term: "exotic" })]);
   });
 
   it("measures how much of a fact its sources contain", () => {

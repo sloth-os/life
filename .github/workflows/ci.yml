@@ -135,7 +135,7 @@ jobs:
       - id: check
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY || secrets.GOOGLE_MAPS_API_KEY }}
           VOICE_TTS_MODEL: ${{ vars.VOICE_TTS_MODEL }}
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           GOOGLE_MAPS_MAP_ID: ${{ vars.GOOGLE_MAPS_MAP_ID }}
@@ -165,10 +165,12 @@ jobs:
           done
           echo "images=$images" >> "$GITHUB_OUTPUT"
           # Optional extras, each exercised live once it is set:
-          #   GOOGLE_MAPS_SERVER_KEY (secret): Maps agent tools and walking routes in the real suite;
+          #   GOOGLE_MAPS_SERVER_KEY (secret): Maps agent tools and walking routes in the real suite.
+          #     Without it CI uses GOOGLE_MAPS_API_KEY, which works while that key has no referrer
+          #     restriction (a production server should have a key of its own);
           #   VOICE_TTS_MODEL (variable): a speech model for the locals' voices;
           #   ANTHROPIC_API_KEY (secret): the evaluation pass with Claude.
-          [ -n "$GOOGLE_MAPS_SERVER_KEY" ] || echo "::notice title=Maps agent tools not exercised::set the GOOGLE_MAPS_SERVER_KEY secret"
+          [ -n "$GOOGLE_MAPS_SERVER_KEY" ] || echo "::notice title=Maps agent tools not exercised::set the GOOGLE_MAPS_SERVER_KEY (or GOOGLE_MAPS_API_KEY) secret"
           [ -n "$VOICE_TTS_MODEL" ] || echo "::notice title=Speaking locals not exercised::set the VOICE_TTS_MODEL variable"
           if [ -n "$ANTHROPIC_API_KEY" ]; then echo "claude=true" >> "$GITHUB_OUTPUT"; else echo "claude=false" >> "$GITHUB_OUTPUT"; echo "::notice title=Claude evaluation skipped::set the ANTHROPIC_API_KEY secret"; fi
 
@@ -189,7 +191,7 @@ jobs:
       # A speech model for the locals, when the organization has one (else the browser's voices).
       VOICE_TTS_MODEL: ${{ vars.VOICE_TTS_MODEL }}
       GOOGLE_MAPS_MAP_ID: ${{ vars.GOOGLE_MAPS_MAP_ID }}
-      # Only used with a GOOGLE_MAPS_SERVER_KEY: walking times to each local.
+      # Only used with a server key (GOOGLE_MAPS_SERVER_KEY, else GOOGLE_MAPS_API_KEY): walking times to each local.
       MAPS_WALKING_ROUTES: "true"
       IMAGE_MODEL: ${{ vars.IMAGE_MODEL }}
       APP_USER_AGENT: CommonGround-CI/0.2 (+https://github.com/${{ github.repository }})
@@ -224,14 +226,14 @@ jobs:
         env:
           AI_API_KEY: ${{ secrets.OMNI_API_KEY }}
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY || secrets.GOOGLE_MAPS_API_KEY }}
         run: node scripts/probe-ai.ts
       # The keys reach these steps only.
       - name: Real-services suite
         env:
           AI_API_KEY: ${{ secrets.OMNI_API_KEY }}
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY || secrets.GOOGLE_MAPS_API_KEY }}
         run: npm run test:e2e:real
       # The evaluation plan (docs/DESIGN.md §7.5) on the same model. Its report goes to the job
       # summary; model quality varies run to run, so a weak result is reported, not a failure.

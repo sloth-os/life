@@ -182,7 +182,7 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the build and t
 - mm-gateway paints postcards with `IMAGE_MODEL_*`;
 - the suite uses Google Maps with `GOOGLE_MAPS_API_KEY`.
 
-Three optional extras run there once they're set: the `GOOGLE_MAPS_SERVER_KEY` secret (Maps agent tools and walking routes, checked in the probe and the suite), the `VOICE_TTS_MODEL` variable (the suite then requires the locals to speak), and the `ANTHROPIC_API_KEY` secret (an **evaluation with Claude** job). After the suite, the evaluation pass runs on the omni model too; its report goes to the job summary.
+Three optional extras run there once they're set: the `GOOGLE_MAPS_SERVER_KEY` secret (Maps agent tools and walking routes, checked in the probe and the suite; without it CI uses `GOOGLE_MAPS_API_KEY`, which works while that key has no referrer restriction), the `VOICE_TTS_MODEL` variable (the suite then requires the locals to speak), and the `ANTHROPIC_API_KEY` secret (an **evaluation with Claude** job). After the suite, the evaluation pass runs on the omni model too; its report goes to the job summary.
 
 It records no traces, because they would capture the browser Maps key. The gateway's log is saved with keys removed.
 

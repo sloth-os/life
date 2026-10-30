@@ -28,7 +28,13 @@ export interface TropeFlag {
   excerpt: string;
 }
 
-/** Banned and soft trope terms in a text, as whole words or phrases. */
+/** Opening quote marks and their closing partners. */
+const QUOTES: Record<string, string> = { "'": "'", '"': '"', "‘": "’", "“": "”", "«": "»", "「": "」" };
+
+/**
+ * Banned and soft trope terms in a text, as whole words or phrases. A term in quotation marks is
+ * being talked about, not used ("she tires of questions about 'exotic' food"), so it isn't flagged.
+ */
 export function scanTropes(text: string, where: string): TropeFlag[] {
   const flags: TropeFlag[] = [];
   for (const [terms, hard] of [
@@ -39,6 +45,8 @@ export function scanTropes(text: string, where: string): TropeFlag[] {
       const re = new RegExp(`\\b${term.replace(/\s+/g, "\\s+")}\\b`, "gi");
       for (const match of text.matchAll(re)) {
         const at = match.index ?? 0;
+        const open = text[at - 1];
+        if (open && QUOTES[open] === text[at + match[0].length]) continue;
         flags.push({ term, hard, where, excerpt: text.slice(Math.max(0, at - 40), at + term.length + 40).replace(/\s+/g, " ").trim() });
       }
     }
@@ -184,7 +192,7 @@ export interface EvaluationReport {
     realism: { ok: boolean; excellentGain: number | null; genericChange: number | null; rudeChange: number | null; earlyOffers: number };
     mentor: { quotes: number; verbatimRate: number | null };
     stereotypes: { personas: number; hardFlags: number; softFlags: number; per100: number | null };
-    grounding: { insights: number; meanOverlap: number | null; lowOverlap: number; judged: number; supported: number };
+    grounding: { insights: number; meanOverlap: number | null; lowOverlap: number; judged: number; supported: number; partly: number; unsupported: number };
   };
   /** Checks that failed (empty when everything passed). */
   failures: string[];
@@ -387,6 +395,8 @@ export async function runEvaluation(opts: EvaluationOptions): Promise<Evaluation
         lowOverlap: overlaps.filter((o) => o < 0.3).length,
         judged: judged.length,
         supported: judged.filter((i) => i.judged === "yes").length,
+        partly: judged.filter((i) => i.judged === "partly").length,
+        unsupported: judged.filter((i) => i.judged === "no").length,
       },
     },
     failures,
@@ -409,7 +419,9 @@ export function reportMarkdown(report: EvaluationReport): string {
     `| Mentor quotes verbatim | ${pct(s.mentor.verbatimRate)} of ${s.mentor.quotes} |`,
     `| Stereotype flags (banned / soft) | ${s.stereotypes.hardFlags} / ${s.stereotypes.softFlags} in ${s.stereotypes.personas} personas |`,
     `| Insight facts found in their sources (mean word overlap) | ${pct(s.grounding.meanOverlap)}, ${s.grounding.lowOverlap} of ${s.grounding.insights} below 30% |`,
-    s.grounding.judged ? `| Judged supported by their sources | ${s.grounding.supported} of ${s.grounding.judged} |` : "",
+    s.grounding.judged
+      ? `| Judged against their sources (supported / partly / not) | ${s.grounding.supported} / ${s.grounding.partly} / ${s.grounding.unsupported} of ${s.grounding.judged} |`
+      : "",
     "",
     "## Conversations",
     "",
