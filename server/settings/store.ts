@@ -237,27 +237,33 @@ export class PostgresSettingsStore implements SettingsStore {
 
   async #listen(): Promise<void> {
     if (this.#closed) return;
+    let client: pg.PoolClient | undefined;
+    // Released once, whichever comes first: a dropped connection or a failed LISTEN.
+    let dead = false;
+    const giveUp = (why: string, error?: Error) => {
+      // Once the store is closed, close() releases the listener.
+      if (dead || this.#closed) return;
+      dead = true;
+      if (this.#listener === client) this.#listener = null;
+      client?.release(error ?? true);
+      this.#log(`[settings] ${why}; listening again in 5 s`);
+      setTimeout(() => void this.#listen(), 5_000).unref();
+    };
     try {
-      const client = await this.#pool.connect();
-      this.#listener = client;
+      client = await this.#pool.connect();
       client.on("notification", () => {
         void this.#reload().then(
           (changed) => changed && this.#listeners.forEach((l) => l(this.#settings)),
           (error: unknown) => this.#log(`[settings] reload failed: ${error instanceof Error ? error.message : String(error)}`),
         );
       });
-      client.on("error", (error) => {
-        this.#log(`[settings] lost the Postgres listener (${error.message}); reconnecting`);
-        this.#listener = null;
-        client.release(error);
-        setTimeout(() => void this.#listen(), 5_000).unref();
-      });
+      client.on("error", (error) => giveUp(`lost the Postgres listener (${error.message})`, error));
       await client.query(`LISTEN ${CHANNEL}`);
+      this.#listener = client;
       // Catch up on anything saved while we weren't listening.
       if (await this.#reload()) this.#listeners.forEach((l) => l(this.#settings));
     } catch (error) {
-      this.#log(`[settings] can't listen for changes in Postgres (${error instanceof Error ? error.message : String(error)}); retrying`);
-      setTimeout(() => void this.#listen(), 5_000).unref();
+      giveUp(`can't listen for settings changes in Postgres (${error instanceof Error ? error.message : String(error)})`, error instanceof Error ? error : undefined);
     }
   }
 
